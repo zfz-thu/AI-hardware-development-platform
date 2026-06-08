@@ -1,142 +1,425 @@
 <!DOCTYPE html>
-<!--
-  AI 硬件开发平台 —— 前端首页（工程师在浏览器里看到的界面 GUI）
-  ================================================================
-  这是一个网页文件，用浏览器打开就能看。它做的事：
-    1. 向后端的 /api/agents 接口要数据（"现在有哪些 agent"）；
-    2. 把每个 agent 显示成一张卡片，工程师可以直观地浏览和选择。
-
-  整个文件分三部分：
-    - <style>  ：管"长什么样"（颜色、布局、卡片样式）
-    - <body>   ：管"页面结构"（标题、卡片放置的容器）
-    - <script> ：管"行为逻辑"（去后端取数据、生成卡片）
-  代码里都有中文注释，方便你看懂和修改。
--->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI 硬件开发平台</title>
   <style>
-    /* ===== 整体页面样式 ===== */
+    :root {
+      --primary: #1e3a8a;
+      --primary-light: #2563eb;
+      --bg: #f0f2f5;
+      --card-bg: #fff;
+      --text: #222;
+      --text-secondary: #666;
+      --border: #e5e7eb;
+      --sidebar-width: 200px;
+      --detail-width: 400px;
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
-      background: #f4f6fa;
-      color: #222;
-      line-height: 1.6;
+      font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
     }
-    /* 顶部标题栏 */
+
+    /* ===== 顶栏 ===== */
     header {
-      background: linear-gradient(135deg, #1e3a8a, #2563eb);
+      height: 54px;
+      background: var(--primary);
       color: #fff;
-      padding: 40px 20px;
-      text-align: center;
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+      gap: 16px;
+      flex-shrink: 0;
+      z-index: 10;
     }
-    header h1 { font-size: 28px; margin-bottom: 8px; }
-    header p { font-size: 15px; opacity: 0.9; }
+    header .logo { font-size: 18px; font-weight: 700; white-space: nowrap; }
+    header .subtitle { font-size: 13px; opacity: 0.75; }
+    .search-box {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+    }
+    .search-box input {
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: none;
+      outline: none;
+      width: 220px;
+      font-size: 13px;
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      transition: background 0.2s;
+    }
+    .search-box input::placeholder { color: rgba(255,255,255,0.55); }
+    .search-box input:focus { background: rgba(255,255,255,0.25); }
 
-    /* 主体内容区 */
-    main { max-width: 1100px; margin: 0 auto; padding: 30px 20px; }
-    .section-title { font-size: 20px; margin-bottom: 20px; color: #1e3a8a; }
+    /* ===== 主布局：三栏 ===== */
+    .layout {
+      display: flex;
+      height: calc(100vh - 54px);
+    }
 
-    /* ===== 卡片网格布局 ===== */
-    /* 自动按屏幕宽度排列卡片，每张最小 280px */
-    .grid {
+    /* ===== 左侧边栏 ===== */
+    aside {
+      width: var(--sidebar-width);
+      background: #fff;
+      border-right: 1px solid var(--border);
+      padding: 16px 0;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+    aside .cat-title {
+      font-size: 12px;
+      color: #999;
+      padding: 8px 20px 6px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    aside .cat-item {
+      display: block;
+      width: 100%;
+      padding: 10px 20px;
+      border: none;
+      background: none;
+      text-align: left;
+      font-size: 14px;
+      cursor: pointer;
+      color: #444;
+      transition: all 0.15s;
+      border-left: 3px solid transparent;
+    }
+    aside .cat-item:hover { background: #f5f7fb; color: var(--primary-light); }
+    aside .cat-item.active {
+      background: #eef3ff;
+      color: var(--primary-light);
+      font-weight: 600;
+      border-left-color: var(--primary-light);
+    }
+    aside .cat-item .count {
+      float: right;
+      font-size: 12px;
+      color: #aaa;
+      background: #f0f0f0;
+      padding: 1px 7px;
+      border-radius: 10px;
+    }
+    aside .cat-item.active .count { background: #dbe4ff; color: var(--primary-light); }
+
+    /* ===== 中间卡片区 ===== */
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .main-content .toolbar {
+      padding: 16px 24px 8px;
+      font-size: 14px;
+      color: #888;
+      flex-shrink: 0;
+    }
+    .card-grid-wrapper {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 24px 24px;
+    }
+    .card-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 20px;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
     }
-    /* 单张 agent 卡片 */
     .card {
       background: #fff;
-      border-radius: 12px;
-      padding: 22px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-      transition: transform 0.15s, box-shadow 0.15s;
+      border-radius: 10px;
+      padding: 20px;
+      border: 1px solid var(--border);
       cursor: pointer;
-      border: 1px solid #eef0f5;
+      transition: all 0.2s;
+      position: relative;
     }
     .card:hover {
-      transform: translateY(-4px);
-      box-shadow: 0 6px 18px rgba(37,99,235,0.15);
+      transform: translateY(-3px);
+      box-shadow: 0 6px 20px rgba(37,99,235,0.12);
+      border-color: #c4d4f0;
     }
-    .card .cat {
+    .card.selected {
+      border-color: var(--primary-light);
+      box-shadow: 0 0 0 2px rgba(37,99,235,0.2);
+      background: #fafcff;
+    }
+    .card .card-icon { font-size: 28px; margin-bottom: 8px; }
+    .card .card-name { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+    .card .card-desc { font-size: 13px; color: #777; line-height: 1.5; }
+    .card .card-footer {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card .card-cat {
+      font-size: 11px;
+      color: var(--primary-light);
+      background: #eef3ff;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
       display: inline-block;
-      font-size: 12px;
-      color: #2563eb;
-      background: #eaf1ff;
-      padding: 2px 10px;
-      border-radius: 20px;
-      margin-bottom: 10px;
     }
-    .card h3 { font-size: 17px; margin-bottom: 8px; }
-    .card p { font-size: 14px; color: #555; }
-    /* 状态标签 */
-    .status {
-      display: inline-block;
-      margin-top: 14px;
-      font-size: 12px;
-      padding: 3px 10px;
-      border-radius: 6px;
-    }
-    .status.available { background: #e6f7ec; color: #18794e; }
-    .status.coming_soon { background: #fff3e0; color: #b26a00; }
+    .status-dot.available { background: #22c55e; }
+    .status-dot.coming_soon { background: #f59e0b; }
 
-    footer { text-align: center; padding: 30px; color: #999; font-size: 13px; }
+    /* ===== 右侧详情面板 ===== */
+    .detail-panel {
+      width: var(--detail-width);
+      background: #fff;
+      border-left: 1px solid var(--border);
+      overflow-y: auto;
+      flex-shrink: 0;
+      padding: 24px;
+    }
+    .detail-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #bbb;
+      text-align: center;
+      font-size: 14px;
+    }
+    .detail-placeholder .placeholder-icon { font-size: 56px; margin-bottom: 16px; }
+    .detail-content h3 { font-size: 18px; margin-bottom: 12px; }
+    .detail-content h4 { font-size: 14px; margin: 18px 0 8px; color: #444; }
+    .detail-content p { font-size: 13px; line-height: 1.7; color: #555; margin-bottom: 8px; }
+    .detail-content ul { padding-left: 20px; font-size: 13px; color: #555; line-height: 1.8; }
+    .detail-content .status-badge {
+      display: inline-block;
+      font-size: 12px;
+      padding: 4px 12px;
+      border-radius: 6px;
+      margin-bottom: 14px;
+    }
+    .status-badge.available { background: #e6f7ec; color: #18794e; }
+    .status-badge.coming_soon { background: #fff3e0; color: #b26a00; }
+    .btn-launch {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 10px 28px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-light));
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 0.2s;
+    }
+    .btn-launch:hover { opacity: 0.9; }
+    .btn-launch:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    /* ===== 响应式 ===== */
+    @media (max-width: 900px) {
+      .detail-panel { display: none; }
+    }
+    @media (max-width: 600px) {
+      aside { display: none; }
+      .card-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <!-- 顶部标题栏 -->
-  <header>
-    <h1>AI 硬件开发平台</h1>
-    <p>一站式硬件开发平台 · 集成多个硬件相关 agent · 为硬件工作提效</p>
-  </header>
 
-  <!-- 主体：agent 卡片会由下面的脚本动态填充到这个容器里 -->
-  <main>
-    <div class="section-title">可用的 Agent / 工具</div>
-    <div class="grid" id="agent-grid">
-      <!-- 这里会被自动填充，初始显示"加载中" -->
-      <p id="loading">正在加载 agent 列表…</p>
+<header>
+  <span class="logo">AI 硬件开发平台</span>
+  <span class="subtitle">一站式硬件开发 · 为工程师提效</span>
+  <div class="search-box">
+    <input type="text" id="search-input" placeholder="搜索 agent …" oninput="onSearch()">
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ===== 左侧：分类边栏 ===== -->
+  <aside>
+    <div class="cat-title">工具分类</div>
+    <div id="category-list"></div>
+  </aside>
+
+  <!-- ===== 中间：卡片区 ===== -->
+  <div class="main-content">
+    <div class="toolbar" id="toolbar">全部工具</div>
+    <div class="card-grid-wrapper">
+      <div class="card-grid" id="card-grid"></div>
     </div>
-  </main>
+  </div>
 
-  <footer>AI 硬件开发平台 · v0.1.0</footer>
+  <!-- ===== 右侧：详情面板 ===== -->
+  <div class="detail-panel" id="detail-panel">
+    <div class="detail-placeholder">
+      <div class="placeholder-icon">📋</div>
+      <p>选择左侧的工具<br>查看详细介绍</p>
+    </div>
+  </div>
 
-  <script>
-    // ===== 页面逻辑：去后端取 agent 列表，生成卡片 =====
+</div>
 
-    // 把单个 agent 的数据，转换成一张卡片的 HTML
-    function renderCard(agent) {
-      // 状态文字：available 显示"可用"，其他显示"即将上线"
-      const statusText = agent.status === "available" ? "可用" : "即将上线";
-      return `
-        <div class="card">
-          <span class="cat">${agent.category}</span>
-          <h3>${agent.name}</h3>
-          <p>${agent.description}</p>
-          <span class="status ${agent.status}">${statusText}</span>
-        </div>
-      `;
+<script>
+  let allAgents = [];
+  let allCategories = [];
+  let selectedCategory = null;
+  let selectedAgentId = null;
+
+  // ===== 数据加载 =====
+  async function loadCategories() {
+    try {
+      const res = await fetch("/api/categories");
+      const data = await res.json();
+      allCategories = data.categories;
+      renderCategories();
+    } catch (e) { console.error("加载分类失败", e); }
+  }
+
+  async function loadAgents() {
+    try {
+      let url = "/api/agents";
+      const params = [];
+      if (selectedCategory) params.push("category=" + encodeURIComponent(selectedCategory));
+      const keyword = document.getElementById("search-input").value.trim();
+      if (keyword) params.push("keyword=" + encodeURIComponent(keyword));
+      if (params.length) url += "?" + params.join("&");
+
+      const res = await fetch(url);
+      const data = await res.json();
+      allAgents = data.agents;
+      renderCards();
+      updateToolbar();
+    } catch (e) {
+      document.getElementById("card-grid").innerHTML =
+        "<p style='color:#999;padding:40px;text-align:center'>⚠️ 无法连接后端，请确认服务已启动</p>";
     }
+  }
 
-    // 向后端接口请求数据，并把结果显示出来
-    async function loadAgents() {
-      const grid = document.getElementById("agent-grid");
-      try {
-        const res = await fetch("/api/agents");      // 调用后端 API
-        const data = await res.json();               // 解析返回的数据
-        // 把每个 agent 渲染成卡片，拼接后放进容器
-        grid.innerHTML = data.agents.map(renderCard).join("");
-      } catch (err) {
-        // 如果后端没启动或出错，给出友好提示
-        grid.innerHTML = "<p>⚠️ 无法连接后端。请先运行 backend/main.py 启动服务。</p>";
-      }
-    }
+  // ===== 渲染分类列表 =====
+  function renderCategories() {
+    const container = document.getElementById("category-list");
 
-    // 页面一打开就执行
+    // 统计各分类数量
+    const counts = {};
+    allCategories.forEach(c => counts[c] = 0);
+    // 需要全量统计（不受当前筛选影响），这里用缓存的全量数据
+    fetch("/api/agents").then(r => r.json()).then(d => {
+      d.agents.forEach(a => { if (counts[a.category] !== undefined) counts[a.category]++; });
+      const total = d.agents.length;
+
+      let html = `<button class="cat-item ${selectedCategory === null ? 'active' : ''}"
+                       onclick="selectCategory(null)">全部<span class="count">${total}</span></button>`;
+      allCategories.forEach(cat => {
+        const active = selectedCategory === cat ? " active" : "";
+        html += `<button class="cat-item${active}" onclick="selectCategory('${escapeHtml(cat)}')">
+                   ${escapeHtml(cat)}<span class="count">${counts[cat] || 0}</span></button>`;
+      });
+      container.innerHTML = html;
+    });
+  }
+
+  function selectCategory(cat) {
+    selectedCategory = cat;
+    selectedAgentId = null;
+    renderCategories();
     loadAgents();
-  </script>
+    showDetailPlaceholder();
+  }
+
+  function onSearch() {
+    selectedAgentId = null;
+    loadAgents();
+    showDetailPlaceholder();
+  }
+
+  // ===== 渲染卡片 =====
+  function renderCards() {
+    const grid = document.getElementById("card-grid");
+    if (!allAgents.length) {
+      grid.innerHTML = "<p style='color:#999;padding:40px;text-align:center'>暂无匹配的工具</p>";
+      return;
+    }
+    grid.innerHTML = allAgents.map(a => {
+      const sel = a.id === selectedAgentId ? " selected" : "";
+      const dotCls = a.status === "available" ? "available" : "coming_soon";
+      return `
+        <div class="card${sel}" onclick="selectAgent('${a.id}')">
+          <div class="card-icon">${a.icon}</div>
+          <div class="card-name">${escapeHtml(a.name)}</div>
+          <div class="card-desc">${escapeHtml(a.description)}</div>
+          <div class="card-footer">
+            <span class="card-cat">${escapeHtml(a.category)}</span>
+            <span class="status-dot ${dotCls}" title="${a.status === 'available' ? '可用' : '即将上线'}"></span>
+          </div>
+        </div>`;
+    }).join("");
+  }
+
+  function selectAgent(id) {
+    selectedAgentId = id;
+    renderCards();
+    showDetail(id);
+  }
+
+  function updateToolbar() {
+    const t = document.getElementById("toolbar");
+    const label = selectedCategory || "全部工具";
+    t.textContent = `${label} · ${allAgents.length} 个工具`;
+  }
+
+  // ===== 详情面板 =====
+  function showDetailPlaceholder() {
+    document.getElementById("detail-panel").innerHTML = `
+      <div class="detail-placeholder">
+        <div class="placeholder-icon">📋</div>
+        <p>选择左侧的工具<br>查看详细介绍</p>
+      </div>`;
+  }
+
+  function showDetail(id) {
+    const agent = allAgents.find(a => a.id === id);
+    if (!agent) return;
+
+    const badgeCls = agent.status === "available" ? "available" : "coming_soon";
+    const badgeText = agent.status === "available" ? "可用" : "即将上线";
+    const btnDisabled = agent.status !== "available" ? " disabled" : "";
+    const btnHtml = agent.url
+      ? `<a class="btn-launch${btnDisabled}" href="${agent.url}" ${btnDisabled ? 'onclick="return false"' : ''}>${agent.urlText || '🚀 启动工具'}</a>`
+      : "";
+
+    document.getElementById("detail-panel").innerHTML = `
+      <div class="detail-content">
+        <span class="status-badge ${badgeCls}">${badgeText}</span>
+        ${agent.detail}
+        ${btnHtml}
+      </div>`;
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // ===== 启动 =====
+  loadCategories();
+  loadAgents();
+</script>
 </body>
 </html>
