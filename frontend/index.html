@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<!--
+  AI 硬件开发平台 —— 前端首页（工程师在浏览器里看到的界面 GUI）
+  ================================================================
+  这是一个网页文件，用浏览器打开就能看。它做的事：
+    1. 向后端的 /api/agents 接口要数据（"现在有哪些 agent"）；
+    2. 把每个 agent 显示成一张卡片，工程师可以直观地浏览和选择。
+
+  整个文件分三部分：
+    - <style>  ：管"长什么样"（颜色、布局、卡片样式）
+    - <body>   ：管"页面结构"（标题、卡片放置的容器）
+    - <script> ：管"行为逻辑"（去后端取数据、生成卡片）
+  代码里都有中文注释，方便你看懂和修改。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 硬件开发平台</title>
+  <style>
+    /* ===== 整体页面样式 ===== */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+      background: #f4f6fa;
+      color: #222;
+      line-height: 1.6;
+    }
+    /* 顶部标题栏 */
+    header {
+      background: linear-gradient(135deg, #1e3a8a, #2563eb);
+      color: #fff;
+      padding: 40px 20px;
+      text-align: center;
+    }
+    header h1 { font-size: 28px; margin-bottom: 8px; }
+    header p { font-size: 15px; opacity: 0.9; }
+
+    /* 主体内容区 */
+    main { max-width: 1100px; margin: 0 auto; padding: 30px 20px; }
+    .section-title { font-size: 20px; margin-bottom: 20px; color: #1e3a8a; }
+
+    /* ===== 卡片网格布局 ===== */
+    /* 自动按屏幕宽度排列卡片，每张最小 280px */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    /* 单张 agent 卡片 */
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 22px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      transition: transform 0.15s, box-shadow 0.15s;
+      cursor: pointer;
+      border: 1px solid #eef0f5;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 6px 18px rgba(37,99,235,0.15);
+    }
+    .card .cat {
+      display: inline-block;
+      font-size: 12px;
+      color: #2563eb;
+      background: #eaf1ff;
+      padding: 2px 10px;
+      border-radius: 20px;
+      margin-bottom: 10px;
+    }
+    .card h3 { font-size: 17px; margin-bottom: 8px; }
+    .card p { font-size: 14px; color: #555; }
+    /* 状态标签 */
+    .status {
+      display: inline-block;
+      margin-top: 14px;
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 6px;
+    }
+    .status.available { background: #e6f7ec; color: #18794e; }
+    .status.coming_soon { background: #fff3e0; color: #b26a00; }
+
+    footer { text-align: center; padding: 30px; color: #999; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <!-- 顶部标题栏 -->
+  <header>
+    <h1>AI 硬件开发平台</h1>
+    <p>一站式硬件开发平台 · 集成多个硬件相关 agent · 为硬件工作提效</p>
+  </header>
+
+  <!-- 主体：agent 卡片会由下面的脚本动态填充到这个容器里 -->
+  <main>
+    <div class="section-title">可用的 Agent / 工具</div>
+    <div class="grid" id="agent-grid">
+      <!-- 这里会被自动填充，初始显示"加载中" -->
+      <p id="loading">正在加载 agent 列表…</p>
+    </div>
+  </main>
+
+  <footer>AI 硬件开发平台 · v0.1.0</footer>
+
+  <script>
+    // ===== 页面逻辑：去后端取 agent 列表，生成卡片 =====
+
+    // 把单个 agent 的数据，转换成一张卡片的 HTML
+    function renderCard(agent) {
+      // 状态文字：available 显示"可用"，其他显示"即将上线"
+      const statusText = agent.status === "available" ? "可用" : "即将上线";
+      return `
+        <div class="card">
+          <span class="cat">${agent.category}</span>
+          <h3>${agent.name}</h3>
+          <p>${agent.description}</p>
+          <span class="status ${agent.status}">${statusText}</span>
+        </div>
+      `;
+    }
+
+    // 向后端接口请求数据，并把结果显示出来
+    async function loadAgents() {
+      const grid = document.getElementById("agent-grid");
+      try {
+        const res = await fetch("/api/agents");      // 调用后端 API
+        const data = await res.json();               // 解析返回的数据
+        // 把每个 agent 渲染成卡片，拼接后放进容器
+        grid.innerHTML = data.agents.map(renderCard).join("");
+      } catch (err) {
+        // 如果后端没启动或出错，给出友好提示
+        grid.innerHTML = "<p>⚠️ 无法连接后端。请先运行 backend/main.py 启动服务。</p>";
+      }
+    }
+
+    // 页面一打开就执行
+    loadAgents();
+  </script>
+</body>
+</html>

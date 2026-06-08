@@ -1,0 +1,6 @@
+# ===== Python 依赖清单 =====
+# 这个文件列出项目运行需要的第三方库。
+# 安装命令：pip install -r requirements.txt
+
+fastapi>=0.110        # 网站后端框架（提供 API 接口）
+uvicorn[standard]>=0.27   # 网站服务器（负责把网站跑起来）

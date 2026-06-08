@@ -1,0 +1,26 @@
+# ===== Git 忽略清单 =====
+# 列在这里的文件/文件夹不会被 git 跟踪、不会上传到 GitHub。
+# 通常是"自动生成的"或"本地私有的"东西，不需要进版本库。
+
+# ---- Python 相关 ----
+__pycache__/          # Python 运行时自动生成的缓存
+*.py[cod]             # 编译后的 .pyc 文件
+*.egg-info/
+.venv/                # 虚拟环境文件夹
+venv/
+env/
+
+# ---- 编辑器 / 系统 ----
+.vscode/              # VS Code 编辑器配置
+.idea/                # PyCharm 编辑器配置
+.DS_Store             # macOS 系统文件
+Thumbs.db             # Windows 系统文件
+
+# ---- 密钥 / 私密信息（重要：不要上传 API key 等）----
+.env                  # 存放密钥的环境变量文件
+*.key
+secrets.*
+
+# ---- 日志 / 临时文件 ----
+*.log
+*.tmp
