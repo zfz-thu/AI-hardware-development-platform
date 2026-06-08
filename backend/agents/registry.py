@@ -9,176 +9,219 @@ import re
 
 AGENTS: list[dict] = [
     {
-        "id": "wcca-passive-discharge",
-        "name": "WCCA 被动放电分析",
-        "description": "汽车电子被动放电电路最坏情况分析",
+        "id": "wcca-circuit",
+        "name": "电路WCCA计算",
+        "description": "最坏情况电路分析（WCCA）：覆盖被动放电、信号链、功率电路等场景",
         "category": "电路分析",
         "status": "available",
         "icon": "⚡",
         "detail": """
-<h3>WCCA 被动放电分析</h3>
-<p>对汽车电子中的<strong>被动放电电路</strong>进行最坏情况分析（Worst Case Circuit Analysis），
-覆盖放电时间验证、功率降额验证、母线放电计算等关键指标。</p>
+<h3>电路WCCA计算</h3>
+<p>对汽车电子电路进行<strong>最坏情况分析（Worst Case Circuit Analysis）</strong>，
+覆盖被动放电、信号调理链、功率电路等关键场景，自动生成分析报告。</p>
 
 <h4>功能亮点</h4>
 <ul>
-  <li>自动识别原理图中的被动放电回路</li>
+  <li>支持被动放电 / 信号链 / 功率电路多种分析模板</li>
   <li>基于 BOM + Datasheet 交叉计算最坏情况参数</li>
-  <li>放电时间 vs. 安全阈值自动对比</li>
-  <li>功率电阻降额裕度验证</li>
+  <li>极值分析（EVA）与 RSS 合成双模式</li>
+  <li>功率降额裕度自动验证</li>
   <li>一键生成 WCCA 分析报告</li>
 </ul>
 
 <h4>适用场景</h4>
-<p>D11-B0 / IPU 母线放电电路、新能源车主驱逆变器被动放电设计验证。</p>
-
-<h4>输入要求</h4>
-<ul>
-  <li>放电回路原理图（PDF / 图片）</li>
-  <li>BOM 表（Excel）</li>
-  <li>关键器件 Datasheet</li>
-</ul>
+<p>新能源车主驱逆变器、OBC、DCDC 等汽车电子关键电路的设计验证。</p>
 """,
-        "url": "/agent/wcca-passive-discharge",
-        "urlText": "🚀 启动 WCCA 被动放电分析",
+        "url": "/agent/wcca-circuit",
+        "urlText": "🚀 启动 WCCA 计算",
     },
     {
-        "id": "desat-protection",
-        "name": "DESAT 保护电路分析",
-        "description": "IGBT/SiC 退饱和保护电路参数计算与时序验证",
+        "id": "monte-carlo",
+        "name": "蒙特卡洛分析",
+        "description": "基于 Monte Carlo 方法的电路容差分析与良率预测",
         "category": "电路分析",
         "status": "available",
-        "icon": "🛡️",
+        "icon": "🎲",
         "detail": """
-<h3>DESAT 保护电路分析</h3>
-<p>针对 IGBT / SiC MOSFET 栅极驱动中的<strong>退饱和（DESAT）保护电路</strong>，
-进行参数计算与时序验证，确保短路工况下器件安全关断。</p>
+<h3>蒙特卡洛分析</h3>
+<p>基于<strong>蒙特卡洛（Monte Carlo）方法</strong>对电路进行容差分析与良率预测，
+考虑器件参数分布、温度漂移、老化效应等因素，评估量产一致性。</p>
 
 <h4>功能亮点</h4>
 <ul>
-  <li>DESAT 检测阈值电压计算</li>
-  <li>消隐时间（Blanking Time）配置验证</li>
-  <li>软关断（Soft Turn-off）参数推荐</li>
-  <li>STGAP4HX 等驱动芯片适配</li>
+  <li>电阻 / 电容 / 运放等关键器件容差建模</li>
+  <li>支持的分布类型：正态、均匀、三角分布</li>
+  <li>支持自定义仿真次数（1k ~ 100k）</li>
+  <li>输出直方图 & Cpk / Ppk 统计量</li>
+  <li>敏感度分析：识别对输出影响最大的器件</li>
 </ul>
 
 <h4>适用场景</h4>
-<p>电机控制器栅极驱动电路设计、SiC 功率模块保护策略验证。</p>
+<p>电压基准精度评估、滤波器截止频率分布、放大器增益一致性验证。</p>
 """,
-        "url": "/agent/desat-protection",
-        "urlText": "🚀 启动 DESAT 分析",
+        "url": "/agent/monte-carlo",
+        "urlText": "🚀 启动蒙特卡洛分析",
     },
     {
-        "id": "dc-dc-power-stage",
-        "name": "DC-DC 功率级计算",
-        "description": "Buck/Boost/Flyback 功率级参数快速选型与损耗估算",
-        "category": "电源设计",
+        "id": "circuit-design-assistant",
+        "name": "电路设计助手",
+        "description": "AI 辅助电路设计：拓扑推荐、器件选型、原理图审查",
+        "category": "电路设计",
         "status": "available",
-        "icon": "🔌",
+        "icon": "🤖",
         "detail": """
-<h3>DC-DC 功率级计算</h3>
-<p>支持 Buck、Boost、Buck-Boost、Flyback 等常见拓扑的<strong>功率级参数计算</strong>，
-一键完成电感选型、电容选型、开关损耗估算。</p>
+<h3>电路设计助手</h3>
+<p>基于 AI 大模型的<strong>电路设计智能助手</strong>，辅助工程师完成拓扑推荐、
+器件选型、原理图审查等设计任务。</p>
 
 <h4>功能亮点</h4>
 <ul>
-  <li>输入电压 / 输出电压 / 输出电流 → 自动推荐电感 & 电容</li>
-  <li>开关频率可调，实时更新损耗估算</li>
-  <li>支持电流纹波率 & 电压纹波约束</li>
-  <li>MOSFET 导通损耗 + 开关损耗 + 二极管损耗分项展示</li>
+  <li>根据设计规格自动推荐电路拓扑</li>
+  <li>关键器件（MOSFET / 运放 / LDO 等）参数选型建议</li>
+  <li>原理图规范性审查（命名、网络、封装检查）</li>
+  <li>常见设计缺陷自动识别</li>
+  <li>支持自然语言交互式问答</li>
 </ul>
+
+<h4>适用场景</h4>
+<p>电源电路设计、模拟信号链设计、功率驱动电路方案评估。</p>
 """,
-        "url": "/agent/dc-dc-power-stage",
-        "urlText": "🚀 启动 DC-DC 计算",
+        "url": "/agent/circuit-design-assistant",
+        "urlText": "🚀 启动电路设计助手",
     },
     {
-        "id": "pcb-trace-capacity",
-        "name": "PCB 走线载流计算",
-        "description": "根据 IPC-2152 / IPC-2221 计算 PCB 走线载流能力与温升",
-        "category": "PCB 设计",
+        "id": "functional-safety",
+        "name": "功能安全FMEDA和DFMEA分析",
+        "description": "FMEDA / DFMEA 分析工具：失效模式、影响及诊断覆盖率计算",
+        "category": "功能安全",
         "status": "available",
-        "icon": "📐",
+        "icon": "🛡️",
         "detail": """
-<h3>PCB 走线载流计算</h3>
-<p>基于 <strong>IPC-2152</strong> 标准，计算 PCB 走线（外层/内层）的载流能力、
-温升、压降和功率损耗，支持多铜厚和多温度场景。</p>
+<h3>功能安全 FMEDA & DFMEA 分析</h3>
+<p>面向 ISO 26262 功能安全开发流程的<strong>FMEDA / DFMEA 分析工具</strong>，
+辅助完成失效模式识别、影响分析、诊断覆盖率计算和安全指标评估。</p>
 
 <h4>功能亮点</h4>
 <ul>
-  <li>IPC-2152 通用曲线 + 修正系数</li>
-  <li>输入电流 / 铜厚 / 允许温升 → 推荐线宽</li>
-  <li>多走线并联方案对比</li>
-  <li>过孔载流能力辅助计算</li>
+  <li>FMEDA：元器件级失效模式 & 失效率库（SN 29500 / IEC 62380）</li>
+  <li>自动计算 SPFM / LFM / PMHF 安全指标</li>
+  <li>DFMEA：结构化失效链建模（失效模式 → 失效影响 → 失效原因）</li>
+  <li>RPN / AP（Action Priority）风险评估与排序</li>
+  <li>导出符合 ISO 26262 模板的分析报告</li>
 </ul>
-""",
-        "url": "/agent/pcb-trace-capacity",
-        "urlText": "🚀 启动 PCB 载流计算",
-    },
-    {
-        "id": "transformer-design",
-        "name": "变压器设计工具",
-        "description": "反激变压器参数设计与磁芯选型",
-        "category": "电源设计",
-        "status": "coming_soon",
-        "icon": "🧲",
-        "detail": """
-<h3>变压器设计工具</h3>
-<p>针对<strong>反激变换器（Flyback）</strong>的变压器进行参数设计和磁芯选型，
-覆盖电感量、匝数比、气隙长度、绕组线径等关键参数。</p>
 
-<h4>功能亮点（开发中）</h4>
-<ul>
-  <li>输入规格参数 → 自动计算变压器关键参数</li>
-  <li>磁芯数据库选型推荐</li>
-  <li>绕组损耗 & 磁芯损耗估算</li>
-</ul>
+<h4>适用场景</h4>
+<p>新能源汽车电驱 / 电池管理 / 自动驾驶域控制器的功能安全分析。</p>
 """,
-        "url": "/agent/transformer-design",
-        "urlText": "🚀 启动变压器设计",
+        "url": "/agent/functional-safety",
+        "urlText": "🚀 启动功能安全分析",
     },
     {
-        "id": "wcca-signal-chain",
-        "name": "WCCA 信号链分析",
-        "description": "模拟信号链最坏情况误差分析与精度预算",
+        "id": "bom-compare",
+        "name": "BOM比对及价格分析助手",
+        "description": "BOM 差异比对、价格趋势分析与替代料推荐",
+        "category": "物料管理",
+        "status": "available",
+        "icon": "📋",
+        "detail": """
+<h3>BOM 比对及价格分析助手</h3>
+<p>面向硬件物料管理的<strong>BOM 比对与成本分析工具</strong>，
+支持多版本 BOM 差异比对、元器件价格趋势分析、替代料智能推荐。</p>
+
+<h4>功能亮点</h4>
+<ul>
+  <li>双 BOM 差异比对：高亮新增 / 删除 / 变更的物料行</li>
+  <li>器件价格历史趋势图（支持主流供应商数据导入）</li>
+  <li>基于规格参数的替代料推荐（Pin-to-Pin / 功能等效）</li>
+  <li>BOM 成本汇总 & 分类占比饼图</li>
+  <li>缺货风险预警 & 交货周期查询</li>
+</ul>
+
+<h4>适用场景</h4>
+<p>硬件改版 BOM 变更评审、量产前物料成本优化、器件 EOL 替代方案评估。</p>
+""",
+        "url": "/agent/bom-compare",
+        "urlText": "🚀 启动 BOM 分析",
+    },
+    {
+        "id": "circuit-efficiency",
+        "name": "电路效率仿真",
+        "description": "功率电路效率仿真：导通损耗、开关损耗与系统效率曲线",
         "category": "电路分析",
         "status": "coming_soon",
-        "icon": "📊",
+        "icon": "📈",
         "detail": """
-<h3>WCCA 信号链分析</h3>
-<p>对模拟信号调理链进行<strong>最坏情况误差分析</strong>，
-包含运放失调、电阻容差、温漂等误差源的 RSS 与极值合成。</p>
+<h3>电路效率仿真</h3>
+<p>对功率变换电路进行<strong>效率仿真分析</strong>，分解导通损耗、开关损耗、
+磁芯损耗等关键损耗源，绘制全工况效率曲线。</p>
 
 <h4>功能亮点（开发中）</h4>
 <ul>
-  <li>多级运放链误差传播建模</li>
-  <li>电阻分压网络 Monte Carlo 仿真</li>
-  <li>ADC 量化误差 & 基准漂移计入</li>
+  <li>支持 Buck / Boost / LLC / PSFB 等常见拓扑</li>
+  <li>MOSFET / IGBT / GaN / SiC 器件损耗模型</li>
+  <li>磁件损耗估算（Steinmetz 方程）</li>
+  <li>全负载范围效率曲线 & 损耗分布瀑布图</li>
 </ul>
+
+<h4>适用场景</h4>
+<p>车载 DCDC / OBC 功率级效率评估、散热设计输入。</p>
 """,
-        "url": "/agent/wcca-signal-chain",
-        "urlText": "🚀 启动信号链分析",
+        "url": "/agent/circuit-efficiency",
+        "urlText": "🚀 启动效率仿真",
     },
     {
-        "id": "eeprom-durability",
-        "name": "EEPROM 耐久计算",
-        "description": "EEPROM 写入寿命估算与磨损均衡策略建议",
-        "category": "嵌入式",
+        "id": "film-capacitor",
+        "name": "膜电容选型分析",
+        "description": "DC-Link 膜电容参数计算、纹波电流校核与寿命评估",
+        "category": "元器件选型",
         "status": "coming_soon",
-        "icon": "💾",
+        "icon": "🔋",
         "detail": """
-<h3>EEPROM 耐久计算</h3>
-<p>根据写入频率、数据量和 EEPROM 规格书参数，<strong>估算器件使用寿命</strong>
-并推荐磨损均衡策略。</p>
+<h3>膜电容选型分析</h3>
+<p>针对电机控制器 DC-Link 应用的<strong>薄膜电容选型工具</strong>，
+覆盖容值计算、纹波电流校核、热点温度与寿命评估。</p>
 
 <h4>功能亮点（开发中）</h4>
 <ul>
-  <li>写入周期 → 年寿命换算</li>
-  <li>磨损均衡算法对比（静态 vs 动态）</li>
-  <li>多分区策略容量开销评估</li>
+  <li>根据母线电压 / 开关频率 / 功率等级计算最小容值</li>
+  <li>纹波电流频谱分解与等效校核</li>
+  <li>ESR 热损耗 & 热点温度估算</li>
+  <li>薄膜电容寿命模型（温度 / 电压加速因子）</li>
+  <li>主流供应商（TDK / Vishay / 法拉）型号库查询</li>
 </ul>
+
+<h4>适用场景</h4>
+<p>新能源车主驱逆变器 DC-Link 电容选型、薄膜电容替代电解电容方案评估。</p>
 """,
-        "url": "/agent/eeprom-durability",
-        "urlText": "🚀 启动 EEPROM 计算",
+        "url": "/agent/film-capacitor",
+        "urlText": "🚀 启动膜电容选型",
+    },
+    {
+        "id": "pcb-utilization",
+        "name": "PCB利用率及价格评估",
+        "description": "PCB 拼板利用率优化与制板成本快速估价",
+        "category": "PCB 设计",
+        "status": "available",
+        "icon": "🧩",
+        "detail": """
+<h3>PCB 利用率及价格评估</h3>
+<p>针对 PCB 制板阶段的<strong>拼板利用率优化与成本估价工具</strong>，
+自动计算拼板利用率、推荐最优拼板方案，并基于工艺参数估算制板价格。</p>
+
+<h4>功能亮点</h4>
+<ul>
+  <li>单板尺寸 → 自动拼接最优拼板方案（0° / 90° / 180° 旋转）</li>
+  <li>拼板利用率实时计算 & 可视化预览</li>
+  <li>基于层数 / 铜厚 / 表面工艺 / 阻焊颜色估算单价</li>
+  <li>V-Cut / 邮票孔工艺选择 & 工艺边宽度设置</li>
+  <li>支持多家 PCB 厂商价格模型对比</li>
+</ul>
+
+<h4>适用场景</h4>
+<p>硬件量产前 PCB 拼板方案评审、制板成本预算评估、多供应商比价。</p>
+""",
+        "url": "/agent/pcb-utilization",
+        "urlText": "🚀 启动 PCB 估价",
     },
 ]
 
