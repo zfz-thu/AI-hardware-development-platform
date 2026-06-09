@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WCCA 最坏情况电路分析</title>
+  <style>
+    :root {
+      --primary: #1e3a8a;
+      --primary-light: #2563eb;
+      --bg: #f0f2f5;
+      --card-bg: #fff;
+      --text: #222;
+      --border: #e5e7eb;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ===== 顶栏 ===== */
+    header {
+      height: 54px;
+      background: var(--primary);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+    header .logo { font-size: 18px; font-weight: 700; }
+    header .sep { color: rgba(255,255,255,0.35); }
+    header .subtitle { font-size: 14px; opacity: 0.8; }
+    .btn-back {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: rgba(255,255,255,0.8);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.2);
+      transition: background 0.15s;
+    }
+    .btn-back:hover { background: rgba(255,255,255,0.1); }
+
+    /* ===== 主体 ===== */
+    .page-body {
+      max-width: 1160px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+    .page-head {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    .page-head h2 {
+      font-size: 24px;
+      margin-bottom: 8px;
+      color: var(--primary);
+    }
+    .page-head p {
+      font-size: 14px;
+      color: #888;
+    }
+
+    /* ===== 电路卡片网格 ===== */
+    .circuit-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 18px;
+    }
+    .circuit-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      border: 1px solid var(--border);
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: column;
+    }
+    .circuit-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 24px rgba(37,99,235,0.1);
+      border-color: #c4d4f0;
+    }
+    .circuit-card .card-top {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+    .circuit-card .card-icon {
+      font-size: 36px;
+      flex-shrink: 0;
+      width: 52px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f0f4ff;
+      border-radius: 12px;
+    }
+    .circuit-card .card-name {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .circuit-card .card-desc {
+      font-size: 13px;
+      color: #888;
+      line-height: 1.5;
+    }
+    .circuit-card .card-tags {
+      margin: 12px 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .circuit-card .card-tags span {
+      font-size: 11px;
+      background: #f5f7fb;
+      color: #666;
+      padding: 3px 10px;
+      border-radius: 12px;
+      border: 1px solid #eef0f5;
+    }
+    .btn-start {
+      margin-top: auto;
+      display: block;
+      width: 100%;
+      padding: 10px 0;
+      background: linear-gradient(135deg, var(--primary), var(--primary-light));
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .btn-start:hover { opacity: 0.9; }
+    .btn-start.coming { background: #bbb; cursor: not-allowed; }
+
+    /* ===== 响应式 ===== */
+    @media (max-width: 700px) {
+      .circuit-grid { grid-template-columns: 1fr; }
+      .page-body { padding: 20px 12px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="btn-back">← 返回平台</a>
+  <span class="sep">|</span>
+  <span class="logo">WCCA 最坏情况电路分析</span>
+  <span class="subtitle">· 选择电路类型开始计算</span>
+</header>
+
+<div class="page-body">
+  <div class="page-head">
+    <h2>选择要分析的电路类型</h2>
+    <p>支持 7 种常见硬件电路的最坏情况分析（Worst Case Circuit Analysis），选择任一电路进入计算</p>
+  </div>
+
+  <div class="circuit-grid" id="circuit-grid"></div>
+</div>
+
+<script>
+  const circuits = [
+    {
+      id: "passive-discharge",
+      icon: "⚡",
+      name: "被动放电电路",
+      desc: "母线电容通过放电电阻释放能量，计算放电时间常数、电阻功率降额与最坏情况放电时间",
+      tags: ["放电时间", "功率降额", "母线电容"],
+      status: "available",
+    },
+    {
+      id: "flyback",
+      icon: "🔄",
+      name: "反激电源电路",
+      desc: "反激变换器最坏情况分析，覆盖变压器匝比、开关管应力、输出整流及反馈环路的极值工况",
+      tags: ["变压器", "开关管", "输出整流"],
+      status: "available",
+    },
+    {
+      id: "bus-voltage-sampling",
+      icon: "📐",
+      name: "母线电压采样电路",
+      desc: "高压母线电阻分压 + 运放缓冲采样电路的最坏情况精度分析，含电阻容差与温漂",
+      tags: ["分压网络", "运放缓冲", "精度预算"],
+      status: "available",
+    },
+    {
+      id: "ntc-sampling",
+      icon: "🌡️",
+      name: "NTC温度采样电路",
+      desc: "NTC 热敏电阻分压采样电路的温度-电压转换精度最坏情况分析，含 β 值偏差与 ADC 量化误差",
+      tags: ["NTC热敏电阻", "分压采样", "温度精度"],
+      status: "available",
+    },
+    {
+      id: "desat",
+      icon: "🛡️",
+      name: "DESAT电路",
+      desc: "IGBT/SiC 退饱和保护电路检测阈值、消隐时间与软关断参数的最坏情况分析",
+      tags: ["DESAT检测", "消隐时间", "软关断"],
+      status: "available",
+    },
+    {
+      id: "ldo",
+      icon: "🔋",
+      name: "LDO电路",
+      desc: "线性稳压器最坏情况分析：输入/输出电容、负载瞬态响应、功耗与热管理的极限工况评估",
+      tags: ["线性稳压", "瞬态响应", "热管理"],
+      status: "available",
+    },
+    {
+      id: "current-sampling",
+      icon: "📊",
+      name: "电流采样电路",
+      desc: "分流电阻 + 运放电流采样电路的最坏情况精度分析，含电阻温漂与运放失调电压合成",
+      tags: ["分流电阻", "运放采样", "精度分析"],
+      status: "available",
+    },
+  ];
+
+  function renderCircuits() {
+    const grid = document.getElementById("circuit-grid");
+    grid.innerHTML = circuits.map(c => `
+      <div class="circuit-card">
+        <div class="card-top">
+          <div class="card-icon">${c.icon}</div>
+          <div>
+            <div class="card-name">${c.name}</div>
+            <div class="card-desc">${c.desc}</div>
+          </div>
+        </div>
+        <div class="card-tags">${c.tags.map(t => `<span>${t}</span>`).join("")}</div>
+        <button class="btn-start" onclick="startAnalysis('${c.id}')">🚀 开始分析</button>
+      </div>
+    `).join("");
+  }
+
+  function startAnalysis(circuitId) {
+    alert(`即将进入「${circuits.find(c => c.id === circuitId)?.name}」的 WCCA 分析页面。\n\n该功能正在开发中，敬请期待！`);
+    // TODO: 跳转到具体电路的分析页面
+  }
+
+  renderCircuits();
+</script>
+</body>
+</html>

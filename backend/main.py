@@ -45,6 +45,12 @@ def get_agent(agent_id: str):
     return {"agent": None}, 404
 
 
+@app.get("/agent/wcca-circuit")
+def wcca_page():
+    """WCCA 计算页面 —— 选择电路类型。"""
+    return FileResponse(FRONTEND_DIR / "wcca.html")
+
+
 @app.get("/")
 def index():
     """返回首页 HTML。"""
