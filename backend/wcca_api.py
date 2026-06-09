@@ -246,11 +246,17 @@ async def wcca_upload(file: UploadFile = File(...)):
     if file.filename.endswith((".xlsx", ".xls")):
         try:
             import pandas as pd
+            import math
             df = pd.read_excel(file_path)
+            preview = df.head(20).to_dict(orient="records")
+            for row in preview:
+                for k, v in row.items():
+                    if isinstance(v, float) and math.isnan(v):
+                        row[k] = None
             summary = {
                 "columns": list(df.columns),
                 "rows": len(df),
-                "preview": df.head(20).to_dict(orient="records"),
+                "preview": preview,
             }
         except Exception:
             summary = {"error": "无法解析 Excel 文件"}
