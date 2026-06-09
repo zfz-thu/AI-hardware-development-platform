@@ -22,12 +22,12 @@ router = APIRouter(prefix="/api/wcca", tags=["wcca"])
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# DeepSeek API endpoint (Anthropic-compatible)
+# Anthropic official API
 ANTHROPIC_BASE_URL = os.environ.get(
-    "ANTHROPIC_BASE_URL", "https://api.deepseek.com/anthropic"
+    "ANTHROPIC_BASE_URL", "https://api.anthropic.com"
 )
 ANTHROPIC_AUTH_TOKEN = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_DEFAULT_HAIKU_MODEL", "deepseek-v4-flash")
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
 
 WCCA_SYSTEM_PROMPT = """你是一位资深的汽车电子 WCCA（最坏情况电路分析）专家，专门负责被动放电电路的分析。
 
