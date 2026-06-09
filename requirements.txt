@@ -2,5 +2,9 @@
 # 这个文件列出项目运行需要的第三方库。
 # 安装命令：pip install -r requirements.txt
 
-fastapi>=0.110        # 网站后端框架（提供 API 接口）
-uvicorn[standard]>=0.27   # 网站服务器（负责把网站跑起来）
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27              # 异步 HTTP 客户端（调用 LLM API）
+pandas>=1.5              # BOM 表 Excel 解析
+openpyxl>=3.1            # xlsx 读写
+python-multipart>=0.0.9  # 文件上传支持

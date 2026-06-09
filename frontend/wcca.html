@@ -249,9 +249,17 @@
     `).join("");
   }
 
+  const ROUTE_MAP = {
+    "passive-discharge": "/agent/passive-discharge",
+  };
+
   function startAnalysis(circuitId) {
-    alert(`即将进入「${circuits.find(c => c.id === circuitId)?.name}」的 WCCA 分析页面。\n\n该功能正在开发中，敬请期待！`);
-    // TODO: 跳转到具体电路的分析页面
+    const url = ROUTE_MAP[circuitId];
+    if (url) {
+      window.location.href = url;
+    } else {
+      alert(`即将进入「${circuits.find(c => c.id === circuitId)?.name}」的 WCCA 分析页面。\n\n该功能正在开发中，敬请期待！`);
+    }
   }
 
   renderCircuits();

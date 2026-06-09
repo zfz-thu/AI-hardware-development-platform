@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from agents.registry import list_agents, list_categories
+from wcca_api import router as wcca_router
 
 app = FastAPI(
     title="AI 硬件开发平台",
@@ -18,10 +19,12 @@ app = FastAPI(
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
+# WCCA 相关 API（chat / upload / calculate）
+app.include_router(wcca_router)
+
 
 @app.get("/api/categories")
 def get_categories():
-    """返回所有 agent 分类。"""
     return {"categories": list_categories()}
 
 
@@ -30,14 +33,12 @@ def get_agents(
     category: str | None = Query(None, description="按分类筛选"),
     keyword: str | None = Query(None, description="按关键词搜索"),
 ):
-    """返回 agent 列表，支持分类筛选和关键词搜索。"""
     agents = list_agents(category=category, keyword=keyword)
     return {"agents": agents}
 
 
 @app.get("/api/agents/{agent_id}")
 def get_agent(agent_id: str):
-    """返回单个 agent 的详细信息。"""
     agents = list_agents()
     for a in agents:
         if a["id"] == agent_id:
@@ -47,16 +48,22 @@ def get_agent(agent_id: str):
 
 @app.get("/agent/wcca-circuit")
 def wcca_page():
-    """WCCA 计算页面 —— 选择电路类型。"""
+    """WCCA 电路类型选择页。"""
     return FileResponse(FRONTEND_DIR / "wcca.html")
+
+
+@app.get("/agent/passive-discharge")
+def passive_discharge_page():
+    """WCCA 被动放电分析 —— 专家对话页。"""
+    return FileResponse(FRONTEND_DIR / "passive-discharge.html")
 
 
 @app.get("/")
 def index():
-    """返回首页 HTML。"""
     return FileResponse(FRONTEND_DIR / "index.html")
 
 
+# 静态文件挂载（必须在最后，避免覆盖上面的路由）
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 
 
