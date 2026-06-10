@@ -9,11 +9,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 
 from engine.models import (
     CircuitParams, Configuration, ResistorDef, CapacitorDef,
+    Topology, Branch, BranchElement,
 )
 from engine.calculator import calculate
 
@@ -22,12 +23,12 @@ router = APIRouter(prefix="/api/wcca", tags=["wcca"])
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# Anthropic official API
-ANTHROPIC_BASE_URL = os.environ.get(
-    "ANTHROPIC_BASE_URL", "https://api.anthropic.com"
-)
-ANTHROPIC_AUTH_TOKEN = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
+# WCCA 专用大模型配置 —— 直连真 Claude，锁定 Opus 4.8 多模态。
+# 不读公共的 ANTHROPIC_* 变量，因此与 CC Switch / Claude Code 的全局模型切换完全隔离，互不影响。
+# WCCA 对话涉及原理图图片识别，必须用具备多模态能力的 Claude Opus，故 model 写死。
+WCCA_BASE_URL = os.environ.get("WCCA_BASE_URL", "https://api.peng-us.com")
+WCCA_AUTH_TOKEN = os.environ.get("WCCA_AUTH_TOKEN", "")
+WCCA_MODEL = "claude-opus-4-8"   # 写死：多模态必需，不随环境变量变化
 
 WCCA_SYSTEM_PROMPT = """你是一位资深的汽车电子 WCCA（最坏情况电路分析）专家，专门负责被动放电电路的分析。
 
@@ -78,6 +79,16 @@ WCCA_SYSTEM_PROMPT = """你是一位资深的汽车电子 WCCA（最坏情况电
     "configurations": [
       {"name": "7串6并", "n_serial": 7, "n_parallel": 6}
     ],
+    "topology": {
+      "combine": "parallel",
+      "branches": [
+        {"name": "主放电支路", "role": "main",
+         "elements": [{"ref": "R39", "n_serial": 7, "n_parallel": 6}]},
+        {"name": "采样支路", "role": "sampling",
+         "elements": [{"ref": "R749", "n_serial": 10, "n_parallel": 1},
+                      {"ref": "R1151", "n_serial": 1, "n_parallel": 2}]}
+      ]
+    },
     "resistors": [
       {"ref": "R39", "mpn": "AC1206FR-07100KL", "R_typ": 100000.0,
        "TOL_max": 0.01, "TOL_min": -0.01, "TCR": 100, "P_rated": 0.25,
@@ -87,6 +98,15 @@ WCCA_SYSTEM_PROMPT = """你是一位资深的汽车电子 WCCA（最坏情况电
   }
 }
 ```
+
+### 关于 topology（拓扑结构）—— 非常重要
+- 拓扑必须由你**从原理图识别**后填入，不要凭空假设。位号、支路数量、每条支路的元件全部以原理图为准。
+- 结构说明：
+  - 一条 `branch`（支路）= 它的 `elements` 串联相加。
+  - 一个 `element` = 该位号电阻 × (`n_serial` / `n_parallel`)，省略时默认各为 1。
+  - 多条支路之间按 `combine` 合并：`"parallel"`（并联，最常见）或 `"series"`（串联）。
+  - 给主放电支路标 `"role": "main"` —— 它用于功率降额判定。
+- 上面的 R39/R749/R1151 只是**示例**。实际请根据你识别到的原理图填写真实位号与连接关系。
 
 ## 特别提醒
 - 工程师上传文件后，你会看到文件内容（如果系统支持多模态的话）
@@ -126,18 +146,39 @@ def _build_circuit_params(p: dict) -> CircuitParams:
             EOL_min=r["EOL_min"],
         )
 
-    # 引入 topology_fn
-    from engine.topology import passive_discharge_r_parallel
-    from engine.topology import build_r_dict as _unused  # noqa
-
     configs = [
         Configuration(
             name=c["name"],
             n_serial=c["n_serial"],
             n_parallel=c["n_parallel"],
+            t_typ_known=c.get("t_typ_known"),
         )
         for c in p.get("configurations", [])
     ]
+
+    # 解析拓扑结构（由 AI 从原理图识别后提供，零硬编码位号）
+    topo_raw = p.get("topology")
+    if not topo_raw or not topo_raw.get("branches"):
+        raise ValueError("缺少拓扑结构（topology）—— 需先从原理图识别支路结构")
+    branches = []
+    for b in topo_raw["branches"]:
+        elements = [
+            BranchElement(
+                ref=e["ref"],
+                n_serial=e.get("n_serial", 1),
+                n_parallel=e.get("n_parallel", 1),
+            )
+            for e in b.get("elements", [])
+        ]
+        branches.append(Branch(
+            name=b.get("name", ""),
+            elements=elements,
+            role=b.get("role", ""),
+        ))
+    topology = Topology(
+        branches=branches,
+        combine=topo_raw.get("combine", "parallel"),
+    )
 
     caps = {}
     for c in p.get("capacitors", []):
@@ -161,7 +202,7 @@ def _build_circuit_params(p: dict) -> CircuitParams:
         V_Safety=p.get("V_Safety", 60.0),
         resistors=resistors,
         capacitors=caps,
-        topology_fn=passive_discharge_r_parallel,
+        topology=topology,
         configurations=configs,
     )
 
@@ -172,12 +213,12 @@ async def _stream_chat(messages: list[dict]) -> Any:
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {ANTHROPIC_AUTH_TOKEN}",
+        "Authorization": f"Bearer {WCCA_AUTH_TOKEN}",
         "anthropic-version": "2023-06-01",
     }
 
     payload = {
-        "model": ANTHROPIC_MODEL,
+        "model": WCCA_MODEL,
         "max_tokens": 4096,
         "system": WCCA_SYSTEM_PROMPT,
         "messages": messages,
@@ -187,7 +228,7 @@ async def _stream_chat(messages: list[dict]) -> Any:
     async with httpx.AsyncClient(timeout=120.0) as client:
         async with client.stream(
             "POST",
-            f"{ANTHROPIC_BASE_URL}/messages",
+            f"{WCCA_BASE_URL}/v1/messages?beta=true",
             headers=headers,
             json=payload,
         ) as response:
@@ -217,7 +258,7 @@ async def wcca_chat(messages: str = Form(...)):
     try:
         msgs = json.loads(messages)
     except json.JSONDecodeError:
-        return {"error": "messages 格式错误，需为 JSON 数组"}
+        raise HTTPException(status_code=400, detail="messages 格式错误，需为 JSON 数组")
 
     return StreamingResponse(
         _stream_chat(msgs),
@@ -233,7 +274,7 @@ async def wcca_chat(messages: str = Form(...)):
 async def wcca_upload(file: UploadFile = File(...)):
     """上传 BOM 或原理图文件。"""
     if not file.filename:
-        return {"error": "未选择文件"}
+        raise HTTPException(status_code=400, detail="未选择文件")
 
     file_path = UPLOAD_DIR / file.filename
     content = await file.read()
@@ -321,5 +362,7 @@ async def wcca_calculate(params: dict):
             "all_P_pass": results.all_P_pass,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"error": f"计算失败: {str(e)}"}, 500
+        raise HTTPException(status_code=400, detail=f"计算失败: {str(e)}")

@@ -4,7 +4,12 @@ AI 硬件开发平台 —— 后端主程序
 """
 from pathlib import Path
 
-from fastapi import FastAPI, Query
+# 加载 .env 里的环境变量（如 WCCA_AUTH_TOKEN）。
+# 必须在导入 wcca_api 之前执行 —— wcca_api 在模块顶层就读取环境变量。
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -43,7 +48,7 @@ def get_agent(agent_id: str):
     for a in agents:
         if a["id"] == agent_id:
             return {"agent": a}
-    return {"agent": None}, 404
+    raise HTTPException(status_code=404, detail=f"未找到 agent: {agent_id}")
 
 
 @app.get("/agent/wcca-circuit")

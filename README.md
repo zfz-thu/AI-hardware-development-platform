@@ -12,11 +12,22 @@
 ai-hardware-platform/
 ├─ backend/                后端（网站的"大脑"，用 Python 写）
 │  ├─ main.py              ★ 网站服务入口，启动它就能跑起来
-│  └─ agents/              所有硬件 agent 都放这里
-│     ├─ __init__.py       （让 Python 把本文件夹识别为"包"）
-│     └─ registry.py       ★ Agent 注册表 —— 新增 agent 在这里登记
+│  ├─ wcca_api.py          ★ WCCA 分析接口：专家对话 / 文件上传 / 计算
+│  ├─ agents/              所有硬件 agent 的注册信息
+│  │  ├─ __init__.py       （让 Python 把本文件夹识别为"包"）
+│  │  └─ registry.py       ★ Agent 注册表 —— 新增 agent 在这里登记
+│  └─ engine/              WCCA 计算引擎（纯数学，不依赖网络）
+│     ├─ models.py         数据结构：电路参数、拓扑、计算结果
+│     ├─ calculator.py     ★ 计算编排器：串起整个 WCCA 流程
+│     ├─ topology.py       拓扑求值：按支路描述算等效电阻（数据驱动）
+│     ├─ resistor.py       电阻最坏情况值（温漂 + 公差 + 寿命漂移）
+│     ├─ discharge.py      RC 放电时间 / 电容反推
+│     └─ power.py          功率降额验证
 ├─ frontend/               前端（工程师在浏览器里看到的界面）
-│  └─ index.html           ★ 首页：显示 agent 卡片，可点击选择
+│  ├─ index.html           ★ 首页：分类边栏 + agent 卡片 + 详情面板
+│  ├─ wcca.html            WCCA 电路类型选择页
+│  └─ passive-discharge.html  WCCA 被动放电分析 —— 专家对话页
+├─ uploads/                上传的 BOM / 原理图文件
 ├─ requirements.txt        Python 依赖清单
 ├─ .gitignore             Git 忽略清单
 └─ README.md             本说明文件
@@ -79,9 +90,16 @@ python backend/main.py
 
 ---
 
-## 📌 后续规划（建议）
+## 📌 后续规划
 
-- [ ] 接入第一个真实 agent（如 WCCA 被动放电分析）
-- [ ] 点击卡片后，进入该 agent 的具体操作页面
-- [ ] 增加 agent 分类筛选、搜索功能
+已完成：
+- [x] 接入第一个真实 agent —— WCCA 被动放电分析（专家对话引导 + 计算引擎）
+- [x] 点击卡片后跳转到对应 agent 的操作页面
+- [x] agent 分类筛选 / 关键词搜索
+- [x] 计算引擎拓扑数据驱动（位号、支路结构由原理图识别后传入，不再写死）
+
+待办：
+- [ ] 从原理图图片中**自动识别拓扑结构**（目前依赖 AI 在对话中描述）
+- [ ] 扩展更多 WCCA 类型（主动放电、降额分析、热分析等）
+- [ ] BOM 表与 datasheet 参数的自动提取与校验
 - [ ] 用户登录与权限管理

@@ -4,16 +4,51 @@
 输出: CalculationResults (完整的计算结果)
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from .models import (
     CircuitParams, CalculationResults, ResistorWCResult,
-    ConfigResult, Configuration,
+    ConfigResult, Configuration, Topology, Branch, BranchElement,
 )
 from .resistor import calculate_resistor_wc
-from .topology import build_r_dict
+from .topology import build_r_dict, evaluate_topology
 from .discharge import t_discharge, derive_capacitance, ln_ratio
 from .power import P_all_max, P_single_max, P_derate_target
+
+
+def _find_main_branch(topo: Topology) -> Branch:
+    """定位主放电支路：优先 role=="main"，否则取第一条支路。"""
+    for b in topo.branches:
+        if b.role == "main":
+            return b
+    return topo.branches[0]
+
+
+def _topology_for_config(topo: Topology, cfg: Configuration) -> Topology:
+    """生成一份「主支路串并联数被 configuration 覆盖」的拓扑副本。
+
+    Configuration 表示同一拓扑下的不同主支路串并联方案。覆盖只作用于
+    主支路的第一个元件（主放电电阻），其余支路保持原样。
+    """
+    new_branches: List[Branch] = []
+    main = _find_main_branch(topo)
+    for b in topo.branches:
+        if b is main and b.elements:
+            first = b.elements[0]
+            overridden = [
+                BranchElement(
+                    ref=first.ref,
+                    n_serial=cfg.n_serial,
+                    n_parallel=cfg.n_parallel,
+                )
+            ] + [
+                BranchElement(ref=e.ref, n_serial=e.n_serial, n_parallel=e.n_parallel)
+                for e in b.elements[1:]
+            ]
+            new_branches.append(Branch(name=b.name, elements=overridden, role=b.role))
+        else:
+            new_branches.append(b)
+    return Topology(branches=new_branches, combine=topo.combine)
 
 
 def calculate(params: CircuitParams) -> CalculationResults:
@@ -36,15 +71,16 @@ def calculate(params: CircuitParams) -> CalculationResults:
     cap_def = list(params.capacitors.values())[0] if params.capacitors else None
     first_cfg = params.configurations[0] if params.configurations else None
 
+    if not params.topology:
+        raise ValueError("缺少拓扑结构（topology）—— 应由原理图识别后提供")
+
     if cap_def and cap_def.Cap_typ > 0:
         Cap_HVDC_typ = cap_def.Cap_typ
-    elif first_cfg and first_cfg.t_typ_known and params.topology_fn:
+    elif first_cfg and first_cfg.t_typ_known:
         # 由典型放电时间反推电容值
         r_typ = build_r_dict(resistors_wc, "R_typ")
-        R_par_typ = params.topology_fn(r_typ, {
-            "n_serial": first_cfg.n_serial,
-            "n_parallel": first_cfg.n_parallel,
-        })
+        topo_cfg = _topology_for_config(params.topology, first_cfg)
+        R_par_typ = evaluate_topology(topo_cfg, r_typ)
         Cap_HVDC_typ = derive_capacitance(
             first_cfg.t_typ_known, R_par_typ,
             params.V_Safety, params.V_HVDC_typ,
@@ -65,7 +101,13 @@ def calculate(params: CircuitParams) -> CalculationResults:
     if not params.resistors:
         raise ValueError("至少需要一个电阻定义")
 
-    main_ref = list(params.resistors.keys())[0]
+    # 主放电电阻 = 主支路的第一个元件（用于功率降额）
+    main_branch = _find_main_branch(params.topology)
+    if not main_branch.elements:
+        raise ValueError(f"主支路 '{main_branch.name}' 没有任何元件")
+    main_ref = main_branch.elements[0].ref
+    if main_ref not in params.resistors:
+        raise ValueError(f"主放电电阻位号 '{main_ref}' 不在电阻参数中")
     P_rated_main = params.resistors[main_ref].P_rated
     P_derate = P_derate_target(P_rated_main, 0.25)
 
@@ -108,20 +150,20 @@ def _evaluate_config(
     P_derate: float,
 ) -> ConfigResult:
     """评估单个配置方案。"""
-    fn = params.topology_fn
-    if fn is None:
-        raise ValueError("CircuitParams.topology_fn 不能为空")
+    if params.topology is None:
+        raise ValueError("缺少拓扑结构（topology）—— 应由原理图识别后提供")
 
-    cfg_dict = {"n_serial": cfg.n_serial, "n_parallel": cfg.n_parallel}
+    # 该方案对应的拓扑（主支路串并联数被 configuration 覆盖）
+    topo_cfg = _topology_for_config(params.topology, cfg)
 
-    # 三种条件下的并联等效电阻
+    # 三种条件下的等效电阻
     r_typ = build_r_dict(resistors_wc, "R_typ")
     r_max = build_r_dict(resistors_wc, "R_max_Tmax")
     r_min = build_r_dict(resistors_wc, "R_min_Tmax")
 
-    Rp_typ = fn(r_typ, cfg_dict)
-    Rp_max = fn(r_max, cfg_dict)
-    Rp_min = fn(r_min, cfg_dict)
+    Rp_typ = evaluate_topology(topo_cfg, r_typ)
+    Rp_max = evaluate_topology(topo_cfg, r_max)
+    Rp_min = evaluate_topology(topo_cfg, r_min)
 
     # 放电时间
     # 典型: 使用 C_typ, V_HVDC_typ
@@ -130,7 +172,9 @@ def _evaluate_config(
     t_max = t_discharge(Rp_max, C_max, params.V_Safety, V_HVDC_max)
 
     # 功率 (使用 V_HVDC_max — 电压越高功率越大)
-    main_ref = list(params.resistors.keys())[0]
+    # 主放电电阻 = 主支路第一个元件
+    main_branch = _find_main_branch(params.topology)
+    main_ref = main_branch.elements[0].ref
     r_wc = resistors_wc[main_ref]
     R_min_total = r_wc.R_min_Tmax * cfg.n_serial / cfg.n_parallel
     P_all = P_all_max(V_HVDC_max, R_min_total)

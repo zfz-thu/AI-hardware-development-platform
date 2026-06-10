@@ -39,11 +39,46 @@ class CapacitorDef:
 
 @dataclass
 class Configuration:
-    """一种电路配置方案。"""
+    """一种电路配置方案。
+
+    表示「同一拓扑下的不同主支路串并联方案」，用于多方案对比。
+    n_serial / n_parallel 会覆盖主支路 (role=="main") element 的串并联数。
+    """
     name: str               # 显示名称，如 "情况一: 7串6并"
-    n_serial: int           # 串联电阻数
-    n_parallel: int         # 并联支路数
+    n_serial: int           # 串联电阻数（覆盖主支路）
+    n_parallel: int         # 并联支路数（覆盖主支路）
     t_typ_known: Optional[float] = None  # 已知典型放电时间 (s)，用于反推电容
+
+
+@dataclass
+class BranchElement:
+    """支路中的一个元件项：某位号电阻 × (n_serial / n_parallel)。
+
+    位号、数量均由 AI 从原理图识别后填入，引擎不写死。
+    """
+    ref: str                # 位号，如 "R39"
+    n_serial: int = 1       # 该元件串联数
+    n_parallel: int = 1     # 该元件并联数
+
+
+@dataclass
+class Branch:
+    """一条支路：若干 BranchElement 串联相加。"""
+    name: str                                   # 支路名，如 "主放电支路"
+    elements: List[BranchElement]               # 串联的元件项
+    role: str = ""                              # "main"=主放电支路（用于功率降额）
+
+
+@dataclass
+class Topology:
+    """电路拓扑结构（由 AI 从原理图识别后填入，零硬编码位号）。
+
+    branches 之间按 combine 合并：
+      - "parallel": 各支路等效电阻并联
+      - "series":   各支路等效电阻串联相加
+    """
+    branches: List[Branch]
+    combine: str = "parallel"
 
 
 @dataclass
@@ -98,7 +133,10 @@ class CircuitParams:
     resistors: Dict[str, ResistorDef] = field(default_factory=dict)
     capacitors: Dict[str, CapacitorDef] = field(default_factory=dict)
 
-    # 拓扑函数 (由电路 skill 提供)
+    # 拓扑结构（由 AI 从原理图识别后填入，零硬编码位号）—— 新路径
+    topology: Optional["Topology"] = None
+
+    # 拓扑函数（旧路径，已弃用，保留仅为向后兼容；新代码请用 topology）
     # 签名: fn(r_dict, config_dict) -> float (等效并联电阻)
     topology_fn: Optional[callable] = None
 

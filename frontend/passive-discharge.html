@@ -413,8 +413,9 @@
       });
       const result = await resp.json();
 
-      if (result.error) {
-        appendMessage("expert", `⚠️ 计算出错: ${result.error}`);
+      if (!resp.ok) {
+        const msg = result.detail || result.error || `HTTP ${resp.status}`;
+        appendMessage("expert", `⚠️ 计算出错: ${msg}`);
         return;
       }
 

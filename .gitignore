@@ -24,3 +24,7 @@ secrets.*
 # ---- 日志 / 临时文件 ----
 *.log
 *.tmp
+
+# 任意子目录下的 .env（如 backend/.env），但保留示例文件
+**/.env
+!**/.env.example
