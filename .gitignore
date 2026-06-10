@@ -28,3 +28,12 @@ secrets.*
 # 任意子目录下的 .env（如 backend/.env），但保留示例文件
 **/.env
 !**/.env.example
+
+# ---- 运行时产物 (runtime artifacts) ----
+# uploads 是运行时目录：忽略生成的 PDF 和每次运行的临时目录，
+# 但保留样本测试文件 (jpg/xlsx)。
+uploads/wcca_*.pdf
+uploads/run_*/
+# 临时备份文件
+*.bak
+*.bak2

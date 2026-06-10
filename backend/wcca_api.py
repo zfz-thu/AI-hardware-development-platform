@@ -6,6 +6,9 @@ WCCA 被动放电分析 —— 后端 API
 import json
 import os
 import re
+import shutil
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +20,7 @@ from engine.models import (
     Topology, Branch, BranchElement,
 )
 from engine.calculator import calculate
+import agent_runner
 
 router = APIRouter(prefix="/api/wcca", tags=["wcca"])
 
@@ -45,6 +49,7 @@ WCCA_SYSTEM_PROMPT = """你是一位资深的汽车电子 WCCA（最坏情况电
 1. **BOM 表** (Excel .xlsx 文件) — 包含位号、MPN、描述等信息
 2. **电路原理图** (JPG/PNG 图片或 PDF) — 用于识别拓扑和位号
 3. **母线电压额定值** (V) — 如 500V
+3a. **母线电容典型值** (uF) 及 **电容偏差** — 如 500uF ±10%，这是放电时间计算的必需输入，务必向工程师确认，不可省略
 4. **母线电压偏差** — 如 ±5%（没有提供则认为 0%）
 5. **主放电电阻的串并联配置** — 如 7串6并
 6. **工作温度范围** — 最高温度和最低温度（如未提供，默认 -40°C ~ 105°C）
@@ -74,6 +79,8 @@ WCCA_SYSTEM_PROMPT = """你是一位资深的汽车电子 WCCA（最坏情况电
   "params": {
     "V_HVDC_typ": 500.0,
     "V_HVDC_tol": 0.05,
+    "Cap_uF": 500.0,
+    "Cap_tol": 0.10,
     "T_max": 105.0,
     "T_min": -40.0,
     "configurations": [
@@ -366,3 +373,84 @@ async def wcca_calculate(params: dict):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"计算失败: {str(e)}")
+
+
+@router.post("/run-agent")
+async def wcca_run_agent(payload: dict):
+    """Run the full WCCA skill via the claude CLI agent.
+
+    Chat flow: the schematic + BOM were already uploaded via /upload, so this
+    takes their server-side paths (not re-uploaded files) plus engineer params,
+    drives the real wcca-passive-discharge skill (vision + BOM + calc +
+    LaTeX -> PDF), copies the produced PDF into uploads/, and returns a download
+    path. Blocking; the agent can take several minutes.
+
+    Expected JSON body:
+      {
+        "schematic_path": "<abs path under uploads/>",
+        "bom_path": "<abs path under uploads/>",
+        "params": {"V_HVDC_typ":..., "V_HVDC_tol":..., "T_max":..., "T_min":...,
+                   "config":"7,7", "Cap_uF":..., "Cap_tol":...}
+      }
+    """
+    schematic_path = payload.get("schematic_path", "")
+    bom_path = payload.get("bom_path", "")
+    params = payload.get("params", {}) or {}
+
+    if not schematic_path or not bom_path:
+        raise HTTPException(
+            status_code=400,
+            detail="schematic_path and bom_path are required",
+        )
+
+    # Security: both paths must resolve to a location inside UPLOAD_DIR, so a
+    # crafted path cannot make the agent read arbitrary files on disk.
+    upload_root = UPLOAD_DIR.resolve()
+    for label, p in (("schematic", schematic_path), ("bom", bom_path)):
+        try:
+            rp = Path(p).resolve()
+        except (OSError, ValueError):
+            raise HTTPException(status_code=400, detail=f"invalid {label} path")
+        if upload_root not in rp.parents and rp != upload_root:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{label} path must be inside the uploads directory",
+            )
+        if not rp.exists():
+            raise HTTPException(status_code=400, detail=f"{label} file not found")
+
+    run_id = uuid.uuid4().hex[:12]
+    run_dir = UPLOAD_DIR / f"run_{run_id}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    result = agent_runner.run_wcca_agent(
+        schematic_path, bom_path, params, run_dir=str(run_dir)
+    )
+
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "error": result.get("error", "agent failed"),
+            "log_tail": result.get("log_tail", ""),
+        }
+
+    # Copy the produced PDF into uploads/ with a unique name for download.
+    src_pdf = Path(result["pdf_path"])
+    dest_name = f"wcca_{run_id}.pdf"
+    dest_pdf = UPLOAD_DIR / dest_name
+    try:
+        shutil.copyfile(src_pdf, dest_pdf)
+    except OSError as e:
+        return {
+            "ok": False,
+            "error": f"PDF produced but copy failed: {e}",
+            "log_tail": result.get("log_tail", ""),
+            "pdf_source": str(src_pdf),
+        }
+
+    return {
+        "ok": True,
+        "download": f"/uploads/{dest_name}",
+        "pdf_source": str(src_pdf),
+        "log_tail": result.get("log_tail", ""),
+    }

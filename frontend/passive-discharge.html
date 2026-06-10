@@ -229,6 +229,10 @@
       header { padding: 0 12px; }
       .input-area { padding: 10px 12px; }
     }
+    .dl-link { display: inline-block; margin-top: 8px; padding: 9px 18px;
+      background: #2e9e5b; color: #fff; border-radius: 8px;
+      text-decoration: none; font-weight: 600; font-size: 14px; }
+    .dl-link:hover { background: #25884d; }
   </style>
 </head>
 <body>
@@ -267,6 +271,8 @@
   const statusBadge = document.getElementById("status-badge");
   let messages = [];  // API 格式的对话历史
   let isStreaming = false;
+  let lastSchematicPath = null;  // 最近上传的原理图服务器路径
+  let lastBomPath = null;        // 最近上传的 BOM 服务器路径
 
   // ===== 初始化：发送问候 =====
   (async function init() {
@@ -352,8 +358,7 @@
         messages.push({ role: "assistant", content: fullText });
         // 自动触发计算
         setTimeout(async () => {
-          appendMessage("expert", "正在执行 WCCA 计算…");
-          await runCalculation(paramsData.params);
+          await generateReport(paramsData.params);
         }, 800);
       } else {
         messages.push({ role: "assistant", content: fullText });
@@ -386,8 +391,10 @@
         // BOM 文件，发送解析结果给专家
         const bomInfo = `[BOM 文件已上传: ${file.name}]\n解析结果: ${result.summary.rows} 行数据, 列: ${result.summary.columns.join(", ")}\n前几行预览:\n${JSON.stringify(result.summary.preview?.slice(0, 10), null, 2)}`;
         messages.push({ role: "user", content: bomInfo });
+        if (result.path) lastBomPath = result.path;
         appendMessage("expert", `✅ 已收到 BOM 文件「${file.name}」，共 ${result.summary.rows} 行。专家正在分析…`);
       } else if (file.name.match(/\.(jpg|jpeg|png|pdf)$/i)) {
+        if (result.path) lastSchematicPath = result.path;
         appendMessage("expert", `✅ 已收到原理图「${file.name}」，专家正在查看…`);
         messages.push({ role: "user", content: `[上传了原理图文件: ${file.name}, ${formatSize(file.size)}]` });
       } else {
@@ -403,6 +410,55 @@
   }
 
   // ===== 执行 WCCA 计算 =====
+  // ===== 调用 agent 生成完整 PDF 报告 =====
+  async function generateReport(params) {
+    if (!lastSchematicPath || !lastBomPath) {
+      const miss = !lastSchematicPath ? '原理图' : 'BOM 表';
+      appendMessage('expert', `⚠️ 还差${miss}文件，请先上传后再生成报告。`);
+      return;
+    }
+    const bubble = createStreamingBubble();
+    const bodyEl = bubble.querySelector('.bubble') || bubble;
+    const t0 = Date.now();
+    statusBadge.textContent = '生成报告中…';
+    const timer = setInterval(() => {
+      const sec = Math.floor((Date.now() - t0) / 1000);
+      bodyEl.innerHTML = renderMarkdown(`🛠️ 正在调用 WCCA 专家智能体生成完整报告… 已用时 ${sec} 秒
+
+（自动识别原理图 + 解析 BOM + 最坏情况计算 + 编译 PDF，通常需要几分钟，请勿关闭页面）`);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }, 1000);
+    try {
+      const resp = await fetch('/api/wcca/run-agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schematic_path: lastSchematicPath, bom_path: lastBomPath, params }),
+      });
+      const data = await resp.json();
+      clearInterval(timer);
+      if (resp.ok && data.ok) {
+        const md = `## ✅ WCCA 报告已生成
+
+报告已完成最坏情况分析并编译为 PDF。
+
+<a class="dl-link" href="${data.download}" target="_blank">📄 下载 WCCA 报告 PDF</a>`;
+        bodyEl.innerHTML = renderMarkdown(md);
+        messages.push({ role: 'assistant', content: '[已生成 WCCA 报告 PDF]' });
+        statusBadge.textContent = '报告已生成';
+        statusBadge.classList.add('connected');
+      } else {
+        const err = data.error || data.detail || `HTTP ${resp.status}`;
+        bodyEl.innerHTML = renderMarkdown(`⚠️ 报告生成失败：${err}`);
+        statusBadge.textContent = '生成失败';
+      }
+    } catch (e) {
+      clearInterval(timer);
+      bodyEl.innerHTML = renderMarkdown(`⚠️ 报告请求失败：${e.message}`);
+      statusBadge.textContent = '生成失败';
+    }
+    chatArea.scrollTop = chatArea.scrollHeight;
+  }
+
   async function runCalculation(params) {
     try {
       statusBadge.textContent = "计算中…";

@@ -23,9 +23,14 @@ app = FastAPI(
 )
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
 
-# WCCA 相关 API（chat / upload / calculate）
+# WCCA 相关 API（chat / upload / calculate / run-agent）
 app.include_router(wcca_router)
+
+# 上传/产出目录挂载，供前端下载生成的 PDF
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 @app.get("/api/categories")
