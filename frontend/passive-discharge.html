@@ -390,7 +390,7 @@
           <div class="up-text">上传原理图</div>
           <div class="up-hint">JPG / PNG / PDF（可多次添加）</div>
         </div>
-        <input type="file" id="sch-input" accept=".jpg,.jpeg,.png,.pdf" onchange="uploadFile(this)">
+        <input type="file" id="sch-input" accept=".jpg,.jpeg,.png,.pdf" multiple onchange="uploadFile(this)">
         <div class="file-list" id="sch-list"></div>
       </div>
       <div class="subzone">
@@ -400,7 +400,7 @@
           <div class="up-text">上传 BOM</div>
           <div class="up-hint">XLSX / XLS（可选，也可口述位号+MPN）</div>
         </div>
-        <input type="file" id="bom-input" accept=".xlsx,.xls" onchange="uploadFile(this)">
+        <input type="file" id="bom-input" accept=".xlsx,.xls" multiple onchange="uploadFile(this)">
         <div class="file-list" id="bom-list"></div>
       </div>
     </div>
@@ -451,8 +451,8 @@
   const statusBadge = document.getElementById("status-badge");
   let messages = [];  // API 格式的对话历史
   let isStreaming = false;
-  let lastSchematicPath = null;  // 最近上传的原理图服务器路径
-  let lastBomPath = null;        // 最近上传的 BOM 服务器路径
+  let schematicPaths = [];  // 已上传原理图的服务器路径列表（支持多张）
+  let bomPaths = [];        // 已上传 BOM 的服务器路径列表（可多个）
 
   // ===== 初始化：发送问候 =====
   (async function init() {
@@ -551,61 +551,79 @@
     }
   }
 
-  // ===== 文件上传 =====
+  // ===== 文件上传（两阶段：先全部上传并显示，再逐张分析）=====
   async function uploadFile(input) {
-    const file = input.files[0];
-    if (!file) return;
+    const files = Array.from(input.files || []);
+    input.value = "";
+    if (!files.length) return;
 
+    // 阶段一：并行上传所有文件，左侧列表立即逐个显示；分析消息按原始顺序收集，先不发给专家。
+    const note = files.length > 1
+      ? appendMessage("expert", `\u23f3 正在上传 ${files.length} 个文件…`)
+      : null;
+    const slots = await Promise.all(files.map((file) => prepareOneFile(file)));
+    if (note && note.parentNode) note.parentNode.removeChild(note);
+
+    // 阶段二：按原始顺序，逐张把消息加入对话并请专家分析（一张一张来）。
+    const ok = slots.filter(Boolean);
+    if (files.length > 1) {
+      appendMessage("expert", `\u2705 已收到 ${ok.length} 个文件，开始逐张分析…`);
+    }
+    for (const slot of ok) {
+      for (const m of slot.messages) messages.push(m);
+      for (const note2 of slot.notes) appendMessage("expert", note2);
+      await streamExpertReply(messages);
+    }
+  }
+
+  // 上传单个文件并把它登记到左侧列表；返回 {messages, notes} 供随后逐张分析。
+  // 不在这里调用专家分析 —— 分析在 uploadFile 的阶段二串行进行。
+  async function prepareOneFile(file) {
+    if (!file) return null;
     const formData = new FormData();
     formData.append("file", file);
-
-    // 显示上传中
-    appendMessage("user", `📎 已上传: ${file.name} (${formatSize(file.size)})`);
-    messages.push({ role: "user", content: `[上传了文件: ${file.name}]` });
-
+    appendMessage("user", `\ud83d\udcce 已上传: ${file.name} (${formatSize(file.size)})`);
+    const out = { messages: [], notes: [] };
     try {
       const resp = await fetch("/api/wcca/upload", { method: "POST", body: formData });
       const result = await resp.json();
 
       if (result.summary && result.summary.columns) {
-        // BOM 文件，发送解析结果给专家
         const bomInfo = `[BOM 文件已上传: ${file.name}]\n解析结果: ${result.summary.rows} 行数据, 列: ${result.summary.columns.join(", ")}\n前几行预览:\n${JSON.stringify(result.summary.preview?.slice(0, 10), null, 2)}`;
-        messages.push({ role: "user", content: bomInfo });
-        if (result.path) lastBomPath = result.path;
+        out.messages.push({ role: "user", content: bomInfo });
+        if (result.path) bomPaths.push(result.path);
         addFileToList(file.name, "BOM");
-        appendMessage("expert", `✅ 已收到 BOM 文件「${file.name}」，共 ${result.summary.rows} 行。专家正在分析…`);
+        out.notes.push(`\u2705 已收到 BOM 文件「${file.name}」，共 ${result.summary.rows} 行。专家正在分析…`);
       } else if (file.name.match(/\.(jpg|jpeg|png)$/i)) {
-        if (result.path) lastSchematicPath = result.path;
+        if (result.path) schematicPaths.push(result.path);
         addFileToList(file.name, "原理图");
-        appendMessage("expert", `✅ 已收到原理图「${file.name}」，专家正在查看…`);
+        out.notes.push(`\u2705 已收到原理图「${file.name}」，专家正在查看…`);
         const mt = file.name.match(/\.png$/i) ? "image/png" : "image/jpeg";
         const b64 = await fileToBase64(file);
-        messages.push({ role: "user", content: [
+        out.messages.push({ role: "user", content: [
           { type: "image", source: { type: "base64", media_type: mt, data: b64 } },
           { type: "text", text: "这是被动放电电路的原理图。请你识别其拓扑结构（有几条支路、主放电电阻矩阵的串并联数、采样/分压支路的连接），用文字描述并与我确认。datasheet 参数无需你查，后台会自动处理。" }
         ] });
       } else if (file.name.match(/\.pdf$/i)) {
-        if (result.path) lastSchematicPath = result.path;
+        if (result.path) schematicPaths.push(result.path);
         addFileToList(file.name, "原理图");
-        appendMessage("expert", `✅ 已收到原理图 PDF「${file.name}」，后台分析时会读取。`);
-        messages.push({ role: "user", content: `[上传了原理图 PDF: ${file.name}]` });
+        out.notes.push(`\u2705 已收到原理图 PDF「${file.name}」，后台分析时会读取。`);
+        out.messages.push({ role: "user", content: `[上传了原理图 PDF: ${file.name}]` });
       } else {
-        messages.push({ role: "user", content: `[上传了文件: ${file.name}, ${formatSize(file.size)}]` });
+        out.messages.push({ role: "user", content: `[上传了文件: ${file.name}, ${formatSize(file.size)}]` });
       }
-
-      await streamExpertReply(messages);
+      return out;
     } catch (e) {
-      appendMessage("expert", `⚠️ 文件上传失败: ${e.message}`);
+      appendMessage("expert", `\u26a0\ufe0f 文件上传失败: ${file.name} — ${e.message}`);
+      return null;
     }
-
-    input.value = "";
   }
 
   // ===== 执行 WCCA 计算 =====
   // ===== 调用 agent 生成完整 PDF 报告 =====
   async function generateReport(params) {
     // 原理图必需；BOM 可选（工程师可改为口述位号+MPN，后台据此联网查 datasheet）
-    if (!lastSchematicPath) {
+    if (!schematicPaths.length) {
       appendMessage('expert', '⚠️ 还差电路原理图，请先上传原理图后再生成报告。');
       return;
     }
@@ -624,7 +642,7 @@
       const resp = await fetch('/api/wcca/run-agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ schematic_path: lastSchematicPath, bom_path: lastBomPath || '', params }),
+        body: JSON.stringify({ schematic_paths: schematicPaths, bom_paths: bomPaths, params }),
       });
       const data = await resp.json();
       clearInterval(timer);
@@ -704,6 +722,7 @@
     div.innerHTML = `<div class="avatar">${avatar}</div><div class="bubble">${renderMarkdown(text)}</div>`;
     chatArea.appendChild(div);
     chatArea.scrollTop = chatArea.scrollHeight;
+    return div;
   }
 
   function showTyping() {

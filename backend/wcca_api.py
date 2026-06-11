@@ -392,31 +392,47 @@ async def wcca_run_agent(payload: dict):
     LaTeX -> PDF), copies the produced PDF into uploads/, and returns a download
     path. Blocking; the agent can take several minutes.
 
-    Expected JSON body:
+    Expected JSON body (arrays preferred; singular fields accepted for
+    back-compat):
       {
-        "schematic_path": "<abs path under uploads/>",
-        "bom_path": "<abs path under uploads/>",
+        "schematic_paths": ["<abs path under uploads/>", ...],   # preferred
+        "bom_paths": ["<abs path under uploads/>", ...],          # optional
+        "schematic_path": "<abs path>",  # legacy single (fallback)
+        "bom_path": "<abs path>",        # legacy single (fallback)
         "params": {"V_HVDC_typ":..., "V_HVDC_tol":..., "T_max":..., "T_min":...,
                    "config":"7,7", "Cap_uF":..., "Cap_tol":...}
       }
     """
-    schematic_path = payload.get("schematic_path", "")
-    bom_path = payload.get("bom_path", "")
+    def _coerce_list(value) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value] if value else []
+        if isinstance(value, list):
+            return [str(v) for v in value if v]
+        return []
+
+    # Prefer the array fields; fall back to the legacy singular fields.
+    schematic_paths = _coerce_list(payload.get("schematic_paths"))
+    if not schematic_paths:
+        schematic_paths = _coerce_list(payload.get("schematic_path"))
+    bom_paths = _coerce_list(payload.get("bom_paths"))
+    if not bom_paths:
+        bom_paths = _coerce_list(payload.get("bom_path"))
     params = payload.get("params", {}) or {}
 
-    if not schematic_path:
+    if not schematic_paths:
         raise HTTPException(
             status_code=400,
-            detail="schematic_path is required",
+            detail="at least one schematic path is required",
         )
 
-    # Security: provided paths must resolve INSIDE UPLOAD_DIR, so a crafted path
-    # cannot make the agent read arbitrary files. bom_path is OPTIONAL (the user
-    # may dictate refs+MPNs instead of uploading a BOM); only validate it if given.
+    # Security: every provided path must resolve INSIDE UPLOAD_DIR, so a crafted
+    # path cannot make the agent read arbitrary files. BOMs are OPTIONAL (the user
+    # may dictate refs+MPNs instead); schematics are required.
     upload_root = UPLOAD_DIR.resolve()
-    to_check = [("schematic", schematic_path)]
-    if bom_path:
-        to_check.append(("bom", bom_path))
+    to_check = [("schematic", p) for p in schematic_paths]
+    to_check += [("bom", p) for p in bom_paths]
     for label, p in to_check:
         try:
             rp = Path(p).resolve()
@@ -435,7 +451,7 @@ async def wcca_run_agent(payload: dict):
     run_dir.mkdir(parents=True, exist_ok=True)
 
     result = agent_runner.run_wcca_agent(
-        schematic_path, bom_path, params, run_dir=str(run_dir)
+        schematic_paths, bom_paths, params, run_dir=str(run_dir)
     )
 
     if not result.get("ok"):

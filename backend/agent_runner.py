@@ -56,7 +56,7 @@ _RESULT_MARKER = "RESULT_PDF:"
 
 # --- Prompt construction ------------------------------------------------------
 
-def _build_prompt(schematic_path: str, bom_path: str, params: dict,
+def _build_prompt(schematic_paths: list, bom_paths: list, params: dict,
                   workdir: str) -> str:
     """Build the instruction prompt for the agent. May contain Chinese."""
     v_typ = params.get("V_HVDC_typ", 500.0)
@@ -73,10 +73,22 @@ def _build_prompt(schematic_path: str, bom_path: str, params: dict,
         "请执行 WCCA 被动放电分析（使用 wcca-passive-discharge 技能的完整六步流程）。",
         "",
         "## 输入材料（绝对路径）",
-        "- 电路原理图: " + schematic_path,
     ]
-    if bom_path:
-        lines.append("- BOM 表: " + bom_path)
+    if len(schematic_paths) == 1:
+        lines.append("- 电路原理图: " + schematic_paths[0])
+    else:
+        lines.append("- 电路原理图（共 " + str(len(schematic_paths)) + " 张，均为同一电路的不同图页/区域）:")
+        for i, sp in enumerate(schematic_paths, 1):
+            lines.append("  " + str(i) + ". " + sp)
+        lines.append("注意：上面是同一个电路的多张原理图，请逐张 Read 识别每一张，"
+                     "并合并成一个跨图页的完整拓扑；不要只看其中一张。")
+    if bom_paths:
+        if len(bom_paths) == 1:
+            lines.append("- BOM 表: " + bom_paths[0])
+        else:
+            lines.append("- BOM 表（共 " + str(len(bom_paths)) + " 个，请全部解析并按位号合并）:")
+            for i, bp in enumerate(bom_paths, 1):
+                lines.append("  " + str(i) + ". " + bp)
     lines += [
         "",
         "## 工程师提供的参数",
@@ -154,9 +166,25 @@ def _newest_pdf(workdir: Path, since_ts: float) -> str | None:
 
 # --- Public entry point -------------------------------------------------------
 
-def run_wcca_agent(schematic_path: str, bom_path: str, params: dict,
+def _as_list(paths) -> list[str]:
+    """Normalize a str | list | None of paths into a clean list of non-empty strs.
+
+    Back-compat: callers may still pass a single path string.
+    """
+    if paths is None:
+        return []
+    if isinstance(paths, str):
+        return [paths] if paths else []
+    return [p for p in paths if p]
+
+
+def run_wcca_agent(schematic_paths, bom_paths, params: dict,
                    run_dir: str | None = None) -> dict:
     """Run the WCCA skill via the claude CLI and return the produced PDF.
+
+    schematic_paths / bom_paths may be a list of absolute paths OR a single
+    path string (back-compat). At least one schematic is required; BOMs are
+    optional (the engineer may dictate refs+MPNs instead).
 
     Returns a dict:
       {ok: bool, pdf_path: str|None, log_tail: str, error: str|None}
@@ -165,13 +193,18 @@ def run_wcca_agent(schematic_path: str, bom_path: str, params: dict,
     workdir = _cfg_workdir()
     timeout = _cfg_timeout()
 
+    schematic_list = _as_list(schematic_paths)
+    bom_list = _as_list(bom_paths)
+
     if not Path(cli).exists():
         return {"ok": False, "pdf_path": None, "log_tail": "",
                 "error": "claude CLI not found at " + cli}
-    # schematic is required; BOM is optional (user may dictate refs+MPNs instead).
-    checks = [("schematic", schematic_path)]
-    if bom_path:
-        checks.append(("BOM", bom_path))
+    if not schematic_list:
+        return {"ok": False, "pdf_path": None, "log_tail": "",
+                "error": "at least one schematic path is required"}
+    # schematics are required; BOMs are optional.
+    checks = [("schematic", p) for p in schematic_list]
+    checks += [("BOM", p) for p in bom_list]
     for label, pth in checks:
         if not Path(pth).exists():
             return {"ok": False, "pdf_path": None, "log_tail": "",
@@ -182,7 +215,7 @@ def run_wcca_agent(schematic_path: str, bom_path: str, params: dict,
     # the configured work dir only if no run_dir was given.
     effective_workdir = Path(run_dir) if run_dir else workdir
     effective_workdir.mkdir(parents=True, exist_ok=True)
-    prompt = _build_prompt(schematic_path, bom_path, params,
+    prompt = _build_prompt(schematic_list, bom_list, params,
                            str(effective_workdir))
 
     # Write the prompt to a UTF-8 temp file with an ASCII name.
