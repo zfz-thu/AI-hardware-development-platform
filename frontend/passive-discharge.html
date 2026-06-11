@@ -524,7 +524,7 @@
               const data = JSON.parse(dataStr);
               if (data.text) {
                 fullText += data.text;
-                bubbleEl.innerHTML = renderMarkdown(fullText);
+                bubbleEl.innerHTML = renderMarkdown(stripJsonBlock(fullText));
                 chatArea.scrollTop = chatArea.scrollHeight;
               }
             } catch (e) { /* skip bad JSON */ }
@@ -535,6 +535,9 @@
       // 检查是否包含参数 JSON
       const paramsData = parseParamsFromText(fullText);
       if (paramsData && paramsData.ready) {
+        // 显示时剥掉 JSON 代码块；若专家只回了 JSON，给一句友好兜底。
+        const shown = stripJsonBlock(fullText);
+        bubbleEl.innerHTML = renderMarkdown(shown || "信息已齐全，正在为你生成 WCCA 报告…");
         messages.push({ role: "assistant", content: fullText });
         // 自动触发计算
         setTimeout(async () => {
@@ -752,6 +755,12 @@
     const m = text.match(/```json\s*([\s\S]*?)\s*```/);
     if (!m) return null;
     try { return JSON.parse(m[1]); } catch (e) { return null; }
+  }
+
+  // 把专家回复里的 ```json {ready/params} 代码块从“显示文本”中剥掉，
+  // 用户不该看到这串参数代码；对话历史 messages 仍保留完整原文。
+  function stripJsonBlock(text) {
+    return text.replace(/```json\s*[\s\S]*?```/g, "").replace(/\n{3,}/g, "\n\n").trim();
   }
 
   function renderMarkdown(text) {
