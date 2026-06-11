@@ -105,15 +105,19 @@ def _build_prompt(schematic_path: str, bom_path: str, params: dict,
             lines.append("- " + str(c.get("ref", "")) + " : " + str(c.get("mpn", "")))
     lines += [
         "",
-        "## 工作目录",
-        "请在以下目录生成所有中间文件和最终报告: " + workdir,
+        "## 工作目录（干净目录，只放本次产物）",
+        "本次所有中间文件、extracted-circuit JSON、报告，都生成在: " + workdir,
+        "不要从其它历史项目目录读取或复用任何 BOM/JSON/报告残留文件；只用本提示给出的输入材料。",
         "",
-        "## 任务要求",
-        "1. 用 Vision 识别原理图拓扑（灰色器件视为空贴，不计入）；若上面提供了已确认拓扑先验，请与之交叉验证。",
-        "2. 若有 BOM 则解析并交叉核对位号；若工程师改为口述位号+MPN（见上），则以该列表为准。对每个 MPN 用 WebSearch 搜索 datasheet 获取 TOL/TCR/额定功率等参数。",
-        "3. 执行最坏情况计算（放电时间、功率降额）。运行 run_wcca.py 时，必须用上面工程师给出的母线电容值传入 --cap-uf 和 --cap-tol，不得自行假设或使用基线默认值；若未提供电容参数，请在报告中明确标注缺失。",
-        "4. 生成中文 LaTeX 计算书并用 xelatex 编译成 PDF。",
-        "5. 全部完成后，在最后单独打印一行，给出最终 PDF 的绝对路径，格式严格为:",
+        "## 任务要求（通用方法：识别当前电路，禁止套用任何历史电路的位号/参数/结果）",
+        "1. 识别**当前**原理图的真实拓扑（几条支路、主放电电阻矩阵、串并联数、采样/分压支路；灰色器件视为空贴不计入）。若上面提供了已确认拓扑先验，与你的识别交叉验证，有出入以原理图为准并在报告说明。",
+        "2. 获取每个器件的 MPN：有 BOM 则按位号查 BOM；工程师口述了位号+MPN（见上）则用之；都没有则在报告标注缺失。对每个 MPN 先查知识库、没有再 WebSearch，提取 TOL/TCR/EOL/额定功率/耐压。",
+        "3. 把识别到的电路写成 extracted-circuit JSON（位号、MPN、各器件参数、topology branches），字段对照 skill 的 engine/models.py；可参考 references/d11-baseline.json 的格式（只学格式，不抄其数据）。",
+        "4. 用 skill 的脚本计算并出报告（电路数据全部来自你写的 JSON，脚本不内置任何电路）：",
+        "   python <skill>/scripts/run_wcca.py --circuit-json <你的extracted.json> --config <串,并> --v-hvdc <V> --v-hvdc-tol <tol> --cap-uf <uF> --cap-tol <tol> --compile",
+        "   必须传入工程师给出的母线电容值（--cap-uf/--cap-tol），不得自行假设或使用任何基线默认值。",
+        "5. 通用报告生成器会遍历你 JSON 里的器件/支路生成中文 LaTeX 计算书并用 xelatex 编译成 PDF。",
+        "6. 全部完成后，在最后单独打印一行，给出最终 PDF 的绝对路径，格式严格为:",
         "   " + _RESULT_MARKER + " <PDF绝对路径>",
         "   这一行必须是纯 ASCII 标记加路径，便于程序解析。",
     ]
@@ -173,12 +177,16 @@ def run_wcca_agent(schematic_path: str, bom_path: str, params: dict,
             return {"ok": False, "pdf_path": None, "log_tail": "",
                     "error": label + " file not found: " + pth}
 
-    workdir.mkdir(parents=True, exist_ok=True)
-    prompt = _build_prompt(schematic_path, bom_path, params, str(workdir))
+    # Use a CLEAN per-run working dir so the agent never sees stale residue from
+    # other projects (old BOM/JSON/reports) in the shared work dir. Falls back to
+    # the configured work dir only if no run_dir was given.
+    effective_workdir = Path(run_dir) if run_dir else workdir
+    effective_workdir.mkdir(parents=True, exist_ok=True)
+    prompt = _build_prompt(schematic_path, bom_path, params,
+                           str(effective_workdir))
 
     # Write the prompt to a UTF-8 temp file with an ASCII name.
-    tmp_dir = Path(run_dir) if run_dir else workdir
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = effective_workdir
     fd, prompt_file = tempfile.mkstemp(prefix="wcca_prompt_", suffix=".txt",
                                        dir=str(tmp_dir))
     os.close(fd)
@@ -189,7 +197,7 @@ def run_wcca_agent(schematic_path: str, bom_path: str, params: dict,
     # do the work. acceptEdits lets it read/write/edit + run tools directly.
     cmd = [cli, "-p", "--permission-mode", "acceptEdits",
            "--allowedTools", *_ALLOWED_TOOLS,
-           "--add-dir", str(workdir)]
+           "--add-dir", str(effective_workdir)]
 
     start = time.time()
     timed_out = False
@@ -203,7 +211,7 @@ def run_wcca_agent(schematic_path: str, bom_path: str, params: dict,
                 encoding="utf-8",
                 errors="replace",
                 timeout=timeout,
-                cwd=str(workdir),
+                cwd=str(effective_workdir),
             )
         stdout = proc.stdout or ""
         stderr = proc.stderr or ""
@@ -230,6 +238,9 @@ def run_wcca_agent(schematic_path: str, bom_path: str, params: dict,
     if pdf and not Path(pdf).exists():
         pdf = None
     if not pdf:
+        # prefer the clean run dir; fall back to the shared work dir just in case
+        pdf = _newest_pdf(effective_workdir, start)
+    if not pdf and effective_workdir != workdir:
         pdf = _newest_pdf(workdir, start)
 
     if not pdf:
