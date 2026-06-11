@@ -30,10 +30,10 @@ secrets.*
 !**/.env.example
 
 # ---- 运行时产物 (runtime artifacts) ----
-# uploads 是运行时目录：忽略生成的 PDF 和每次运行的临时目录，
-# 但保留样本测试文件 (jpg/xlsx)。
-uploads/wcca_*.pdf
-uploads/run_*/
+# uploads 是运行时目录：忽略其中所有上传材料与生成产物（jpg/xlsx/pdf/run_* 等），
+# 只保留 .gitkeep 占位，确保克隆后目录存在。
+uploads/*
+!uploads/.gitkeep
 # 临时备份文件
 *.bak
 *.bak*
