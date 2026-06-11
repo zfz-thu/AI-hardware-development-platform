@@ -15,6 +15,7 @@ NOTE: the prompt sent to the agent contains Chinese text. We build it here at
 runtime and write it to a UTF-8 temp file; we never put Chinese into a source
 file via tooling. The agent reads the prompt from stdin.
 """
+import json
 import os
 import re
 import subprocess
@@ -65,13 +66,18 @@ def _build_prompt(schematic_path: str, bom_path: str, params: dict,
     config = params.get("config", "")
     cap_uf = params.get("Cap_uF", params.get("cap_uf", None))
     cap_tol = params.get("Cap_tol", params.get("cap_tol", None))
+    topology = params.get("topology")
+    comp_src = params.get("components_source") or {}
 
     lines = [
         "请执行 WCCA 被动放电分析（使用 wcca-passive-discharge 技能的完整六步流程）。",
         "",
         "## 输入材料（绝对路径）",
         "- 电路原理图: " + schematic_path,
-        "- BOM 表: " + bom_path,
+    ]
+    if bom_path:
+        lines.append("- BOM 表: " + bom_path)
+    lines += [
         "",
         "## 工程师提供的参数",
         "- 母线电压额定值 V_HVDC_typ: " + str(v_typ) + " V",
@@ -85,14 +91,26 @@ def _build_prompt(schematic_path: str, bom_path: str, params: dict,
         lines.append("- 母线电容偏差 Cap_tol: " + str(cap_tol))
     if config:
         lines.append("- 主放电电阻串并联配置: " + str(config))
+    if topology:
+        lines.append("")
+        lines.append("## 对话中已与工程师确认的电路拓扑（先验，供交叉验证）")
+        lines.append("以下拓扑是对话阶段专家看原理图识别并经工程师确认的，"
+                     "请在你自己识别图像后与之交叉验证；若有出入，以原理图实际为准并在报告中说明差异：")
+        lines.append(json.dumps(topology, ensure_ascii=False, indent=2))
+    if comp_src.get("components"):
+        lines.append("")
+        lines.append("## 器件来源：工程师口述的位号与 MPN（无 BOM 文件）")
+        lines.append("请用这些位号和 MPN 联网 WebSearch 查询 datasheet 参数：")
+        for c in comp_src["components"]:
+            lines.append("- " + str(c.get("ref", "")) + " : " + str(c.get("mpn", "")))
     lines += [
         "",
         "## 工作目录",
         "请在以下目录生成所有中间文件和最终报告: " + workdir,
         "",
         "## 任务要求",
-        "1. 用 Vision 识别原理图拓扑（灰色器件视为空贴，不计入）。",
-        "2. 解析 BOM，交叉核对位号，必要时 WebSearch 搜索 datasheet 参数。",
+        "1. 用 Vision 识别原理图拓扑（灰色器件视为空贴，不计入）；若上面提供了已确认拓扑先验，请与之交叉验证。",
+        "2. 若有 BOM 则解析并交叉核对位号；若工程师改为口述位号+MPN（见上），则以该列表为准。对每个 MPN 用 WebSearch 搜索 datasheet 获取 TOL/TCR/额定功率等参数。",
         "3. 执行最坏情况计算（放电时间、功率降额）。运行 run_wcca.py 时，必须用上面工程师给出的母线电容值传入 --cap-uf 和 --cap-tol，不得自行假设或使用基线默认值；若未提供电容参数，请在报告中明确标注缺失。",
         "4. 生成中文 LaTeX 计算书并用 xelatex 编译成 PDF。",
         "5. 全部完成后，在最后单独打印一行，给出最终 PDF 的绝对路径，格式严格为:",
@@ -146,7 +164,11 @@ def run_wcca_agent(schematic_path: str, bom_path: str, params: dict,
     if not Path(cli).exists():
         return {"ok": False, "pdf_path": None, "log_tail": "",
                 "error": "claude CLI not found at " + cli}
-    for label, pth in (("schematic", schematic_path), ("BOM", bom_path)):
+    # schematic is required; BOM is optional (user may dictate refs+MPNs instead).
+    checks = [("schematic", schematic_path)]
+    if bom_path:
+        checks.append(("BOM", bom_path))
+    for label, pth in checks:
         if not Path(pth).exists():
             return {"ok": False, "pdf_path": None, "log_tail": "",
                     "error": label + " file not found: " + pth}
@@ -162,7 +184,11 @@ def run_wcca_agent(schematic_path: str, bom_path: str, params: dict,
     os.close(fd)
     Path(prompt_file).write_text(prompt, encoding="utf-8")
 
-    cmd = [cli, "-p", "--allowedTools", *_ALLOWED_TOOLS,
+    # --permission-mode acceptEdits: in headless mode the agent must NOT enter
+    # plan mode and wait for human approval (nobody can approve) — it should just
+    # do the work. acceptEdits lets it read/write/edit + run tools directly.
+    cmd = [cli, "-p", "--permission-mode", "acceptEdits",
+           "--allowedTools", *_ALLOWED_TOOLS,
            "--add-dir", str(workdir)]
 
     start = time.time()

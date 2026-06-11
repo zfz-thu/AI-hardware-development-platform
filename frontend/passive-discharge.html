@@ -393,10 +393,19 @@
         messages.push({ role: "user", content: bomInfo });
         if (result.path) lastBomPath = result.path;
         appendMessage("expert", `✅ 已收到 BOM 文件「${file.name}」，共 ${result.summary.rows} 行。专家正在分析…`);
-      } else if (file.name.match(/\.(jpg|jpeg|png|pdf)$/i)) {
+      } else if (file.name.match(/\.(jpg|jpeg|png)$/i)) {
         if (result.path) lastSchematicPath = result.path;
         appendMessage("expert", `✅ 已收到原理图「${file.name}」，专家正在查看…`);
-        messages.push({ role: "user", content: `[上传了原理图文件: ${file.name}, ${formatSize(file.size)}]` });
+        const mt = file.name.match(/\.png$/i) ? "image/png" : "image/jpeg";
+        const b64 = await fileToBase64(file);
+        messages.push({ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: mt, data: b64 } },
+          { type: "text", text: "这是被动放电电路的原理图。请你识别其拓扑结构（有几条支路、主放电电阻矩阵的串并联数、采样/分压支路的连接），用文字描述并与我确认。datasheet 参数无需你查，后台会自动处理。" }
+        ] });
+      } else if (file.name.match(/\.pdf$/i)) {
+        if (result.path) lastSchematicPath = result.path;
+        appendMessage("expert", `✅ 已收到原理图 PDF「${file.name}」，后台分析时会读取。`);
+        messages.push({ role: "user", content: `[上传了原理图 PDF: ${file.name}]` });
       } else {
         messages.push({ role: "user", content: `[上传了文件: ${file.name}, ${formatSize(file.size)}]` });
       }
@@ -412,9 +421,9 @@
   // ===== 执行 WCCA 计算 =====
   // ===== 调用 agent 生成完整 PDF 报告 =====
   async function generateReport(params) {
-    if (!lastSchematicPath || !lastBomPath) {
-      const miss = !lastSchematicPath ? '原理图' : 'BOM 表';
-      appendMessage('expert', `⚠️ 还差${miss}文件，请先上传后再生成报告。`);
+    // 原理图必需；BOM 可选（工程师可改为口述位号+MPN，后台据此联网查 datasheet）
+    if (!lastSchematicPath) {
+      appendMessage('expert', '⚠️ 还差电路原理图，请先上传原理图后再生成报告。');
       return;
     }
     const bubble = createStreamingBubble();
@@ -432,7 +441,7 @@
       const resp = await fetch('/api/wcca/run-agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ schematic_path: lastSchematicPath, bom_path: lastBomPath, params }),
+        body: JSON.stringify({ schematic_path: lastSchematicPath, bom_path: lastBomPath || '', params }),
       });
       const data = await resp.json();
       clearInterval(timer);
@@ -558,6 +567,19 @@
       })
       .replace(/\n\n/g, "<br><br>")
       .replace(/\n/g, "<br>");
+  }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const s = reader.result;
+        const comma = s.indexOf(',');
+        resolve(comma >= 0 ? s.slice(comma + 1) : s);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   }
 
   function formatSize(bytes) {

@@ -36,4 +36,4 @@ uploads/wcca_*.pdf
 uploads/run_*/
 # 临时备份文件
 *.bak
-*.bak2
+*.bak*
