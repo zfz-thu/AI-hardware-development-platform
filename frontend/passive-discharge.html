@@ -449,20 +449,38 @@
   const userInput = document.getElementById("user-input");
   const btnSend = document.getElementById("btn-send");
   const statusBadge = document.getElementById("status-badge");
-  let messages = [];  // API 格式的对话历史
   let isStreaming = false;
-  let schematicPaths = [];  // 已上传原理图的服务器路径列表（支持多张）
-  let bomPaths = [];        // 已上传 BOM 的服务器路径列表（可多个）
 
-  // ===== 初始化：发送问候 =====
+  // Persistent state: user_id stored in sessionStorage so a page-refresh
+  // within the same tab resumes the same CLI --resume session.
+  let userId = sessionStorage.getItem("wcca_user_id");
+  if (!userId) {
+    userId = "u_" + Math.random().toString(36).slice(2, 10);
+    sessionStorage.setItem("wcca_user_id", userId);
+  }
+  let sessionReady = false;
+
+  // ===== Init: start session =====
   (async function init() {
-    messages = [{ role: "user", content: "你好" }];
-    await streamExpertReply(messages);
+    statusBadge.textContent = "connecting...";
+    try {
+      const fd = new FormData();
+      fd.append("user_id", userId);
+      const resp = await fetch("/api/wcca/session/start", { method: "POST", body: fd });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const data = await resp.json();
+      sessionReady = true;
+      statusBadge.textContent = "connected";
+      statusBadge.classList.add("connected");
+    } catch (e) {
+      statusBadge.textContent = "offline";
+      appendMessage("expert", "⚠️ 无法启动分析会话，请刷新页面重试。错误：" + e.message);
+    }
   })();
 
-  // ===== 发送消息 =====
+  // ===== Send text message =====
   async function sendMessage() {
-    if (isStreaming) return;
+    if (isStreaming || !sessionReady) return;
     const text = userInput.value.trim();
     if (!text) return;
 
@@ -470,36 +488,37 @@
     userInput.style.height = "auto";
     btnSend.disabled = true;
 
-    // 显示用户消息
     appendMessage("user", text);
-    messages.push({ role: "user", content: text });
-
-    await streamExpertReply(messages);
+    await streamSession(text, null, null);
     btnSend.disabled = false;
     userInput.focus();
   }
 
-  // ===== 流式获取专家回复 =====
-  async function streamExpertReply(msgs) {
+  // ===== Core relay: POST /session/message and stream SSE =====
+  async function streamSession(text, imageb64, mediaType) {
+    if (!sessionReady) {
+      appendMessage("expert", "⚠️ 会话未就绪，请稍候再试。");
+      return;
+    }
     isStreaming = true;
     const typingEl = showTyping();
 
     try {
-      const formData = new FormData();
-      formData.append("messages", JSON.stringify(msgs));
+      const fd = new FormData();
+      fd.append("user_id", userId);
+      fd.append("text", text || "");
+      if (imageb64) {
+        fd.append("image_b64", imageb64);
+        fd.append("media_type", mediaType || "image/jpeg");
+      }
 
-      const resp = await fetch("/api/wcca/chat", {
-        method: "POST",
-        body: formData,
-      });
-
+      const resp = await fetch("/api/wcca/session/message", { method: "POST", body: fd });
       if (!resp.ok) {
         removeTyping(typingEl);
-        appendMessage("expert", "⚠️ 服务暂时不可用，请稍后重试。");
+        appendMessage("expert", "⚠️ 服务暂时不可用，请稍候重试。");
         return;
       }
 
-      // 创建专家回复气泡并流式更新
       const bubbleEl = createStreamingBubble();
       removeTyping(typingEl);
 
@@ -507,222 +526,137 @@
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let eventName = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
+        const lines = buffer.split("
+");
         buffer = lines.pop() || "";
 
         for (const line of lines) {
-          if (line.startsWith("data: ")) {
+          if (line.startsWith("event: ")) {
+            eventName = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
             const dataStr = line.slice(6);
-            if (dataStr === "[DONE]") continue;
+
+            if (eventName === "done" || dataStr === "[DONE]") {
+              eventName = "";
+              continue;
+            }
+
+            if (eventName === "pdf") {
+              // PDF is ready — show download button
+              try {
+                const d = JSON.parse(dataStr);
+                if (d.download) {
+                  const dlBubble = appendMessage("expert",
+                    "## ✅ WCCA 报告已生成
+
+" +
+                    '<a class="dl-link" href="' + d.download + '" target="_blank">📄 下载 WCCA 报告 PDF</a>'
+                  );
+                  statusBadge.textContent = "报告已生成";
+                  statusBadge.classList.add("connected");
+                }
+              } catch (e2) { /* ignore */ }
+              eventName = "";
+              continue;
+            }
+
+            // Default: text token
             try {
-              const data = JSON.parse(dataStr);
-              if (data.text) {
-                fullText += data.text;
-                bubbleEl.innerHTML = renderMarkdown(stripJsonBlock(fullText));
+              const d = JSON.parse(dataStr);
+              if (d.text) {
+                fullText += d.text;
+                bubbleEl.innerHTML = renderMarkdown(fullText);
                 chatArea.scrollTop = chatArea.scrollHeight;
               }
-            } catch (e) { /* skip bad JSON */ }
+              if (d.error) {
+                bubbleEl.innerHTML = renderMarkdown("⚠️ " + d.error);
+              }
+            } catch (e2) { /* skip bad JSON */ }
+            eventName = "";
+          } else if (line === "") {
+            eventName = "";
           }
         }
       }
-
-      // 检查是否包含参数 JSON
-      const paramsData = parseParamsFromText(fullText);
-      if (paramsData && paramsData.ready) {
-        // 显示时剥掉 JSON 代码块；若专家只回了 JSON，给一句友好兜底。
-        const shown = stripJsonBlock(fullText);
-        bubbleEl.innerHTML = renderMarkdown(shown || "信息已齐全，正在为你生成 WCCA 报告…");
-        messages.push({ role: "assistant", content: fullText });
-        // 自动触发计算
-        setTimeout(async () => {
-          await generateReport(paramsData.params);
-        }, 800);
-      } else {
-        messages.push({ role: "assistant", content: fullText });
-      }
     } catch (e) {
       removeTyping(typingEl);
-      appendMessage("expert", `⚠️ 连接失败: ${e.message}`);
+      appendMessage("expert", "⚠️ 连接失败: " + e.message);
     } finally {
       isStreaming = false;
     }
   }
 
-  // ===== 文件上传（两阶段：先全部上传并显示，再逐张分析）=====
+  // ===== File upload: send image directly to agent via session =====
   async function uploadFile(input) {
     const files = Array.from(input.files || []);
     input.value = "";
     if (!files.length) return;
 
-    // 阶段一：并行上传所有文件，左侧列表立即逐个显示；分析消息按原始顺序收集，先不发给专家。
     const note = files.length > 1
-      ? appendMessage("expert", `\u23f3 正在上传 ${files.length} 个文件…`)
+      ? appendMessage("expert", "⏳ 正在上传 " + files.length + " 个文件…")
       : null;
-    const slots = await Promise.all(files.map((file) => prepareOneFile(file)));
-    if (note && note.parentNode) note.parentNode.removeChild(note);
 
-    // 阶段二：按原始顺序，逐张把消息加入对话并请专家分析（一张一张来）。
-    const ok = slots.filter(Boolean);
-    if (files.length > 1) {
-      appendMessage("expert", `\u2705 已收到 ${ok.length} 个文件，开始逐张分析…`);
+    for (const file of files) {
+      await processUploadedFile(file);
     }
-    for (const slot of ok) {
-      for (const m of slot.messages) messages.push(m);
-      for (const note2 of slot.notes) appendMessage("expert", note2);
-      await streamExpertReply(messages);
-    }
+    if (note && note.parentNode) note.remove();
   }
 
-  // 上传单个文件并把它登记到左侧列表；返回 {messages, notes} 供随后逐张分析。
-  // 不在这里调用专家分析 —— 分析在 uploadFile 的阶段二串行进行。
-  async function prepareOneFile(file) {
-    if (!file) return null;
-    const formData = new FormData();
-    formData.append("file", file);
-    appendMessage("user", `\ud83d\udcce 已上传: ${file.name} (${formatSize(file.size)})`);
-    const out = { messages: [], notes: [] };
-    try {
-      const resp = await fetch("/api/wcca/upload", { method: "POST", body: formData });
-      const result = await resp.json();
+  async function processUploadedFile(file) {
+    if (!file) return;
+    // Always upload to server first (for BOM / PDF handling by agent)
+    const fd = new FormData();
+    fd.append("file", file);
+    appendMessage("user", "📎 已上传: " + file.name + " (" + formatSize(file.size) + ")");
 
-      if (result.summary && result.summary.columns) {
-        const bomInfo = `[BOM 文件已上传: ${file.name}]\n解析结果: ${result.summary.rows} 行数据, 列: ${result.summary.columns.join(", ")}\n前几行预览:\n${JSON.stringify(result.summary.preview?.slice(0, 10), null, 2)}`;
-        out.messages.push({ role: "user", content: bomInfo });
-        if (result.path) bomPaths.push(result.path);
-        addFileToList(file.name, "BOM");
-        out.notes.push(`\u2705 已收到 BOM 文件「${file.name}」，共 ${result.summary.rows} 行。专家正在分析…`);
-      } else if (file.name.match(/\.(jpg|jpeg|png)$/i)) {
-        if (result.path) schematicPaths.push(result.path);
+    try {
+      const uploadResp = await fetch("/api/wcca/upload", { method: "POST", body: fd });
+      const result = await uploadResp.json();
+
+      if (file.name.match(/\.(jpg|jpeg|png)$/i)) {
+        // Send image directly to the agent session
         addFileToList(file.name, "原理图");
-        out.notes.push(`\u2705 已收到原理图「${file.name}」，专家正在查看…`);
         const mt = file.name.match(/\.png$/i) ? "image/png" : "image/jpeg";
         const b64 = await fileToBase64(file);
-        out.messages.push({ role: "user", content: [
-          { type: "image", source: { type: "base64", media_type: mt, data: b64 } },
-          { type: "text", text: "这是被动放电电路的原理图。请你识别其拓扑结构（有几条支路、主放电电阻矩阵的串并联数、采样/分压支路的连接），用文字描述并与我确认。datasheet 参数无需你查，后台会自动处理。" }
-        ] });
+        const caption = "这是被动放电电路的原理图。请识别电路拓扑结构，我们开始分析。";
+        await streamSession(caption, b64, mt);
       } else if (file.name.match(/\.pdf$/i)) {
-        if (result.path) schematicPaths.push(result.path);
+        // PDF schematic: send path to agent
         addFileToList(file.name, "原理图");
-        out.notes.push(`\u2705 已收到原理图 PDF「${file.name}」，后台分析时会读取。`);
-        out.messages.push({ role: "user", content: `[上传了原理图 PDF: ${file.name}]` });
+        const msg = "[上传了原理图 PDF: " + file.name + "，服务器路径: " + (result.path || "") + "]";
+        await streamSession(msg, null, null);
+      } else if (result.summary && result.summary.columns) {
+        // BOM table
+        addFileToList(file.name, "BOM");
+        const bomInfo = "[BOM 文件已上传: " + file.name + "]
+" +
+          "解析结果: " + result.summary.rows + " 行数据, 列: " + result.summary.columns.join(", ") + "
+" +
+          "前几行预览:
+" + JSON.stringify(result.summary.preview && result.summary.preview.slice(0, 10), null, 2);
+        await streamSession(bomInfo, null, null);
       } else {
-        out.messages.push({ role: "user", content: `[上传了文件: ${file.name}, ${formatSize(file.size)}]` });
+        const msg = "[上传了文件: " + file.name + ", " + formatSize(file.size) + "]";
+        await streamSession(msg, null, null);
       }
-      return out;
     } catch (e) {
-      appendMessage("expert", `\u26a0\ufe0f 文件上传失败: ${file.name} — ${e.message}`);
-      return null;
+      appendMessage("expert", "⚠️ 文件上传失败: " + file.name + " — " + e.message);
     }
   }
 
-  // ===== 执行 WCCA 计算 =====
-  // ===== 调用 agent 生成完整 PDF 报告 =====
-  async function generateReport(params) {
-    // 原理图必需；BOM 可选（工程师可改为口述位号+MPN，后台据此联网查 datasheet）
-    if (!schematicPaths.length) {
-      appendMessage('expert', '⚠️ 还差电路原理图，请先上传原理图后再生成报告。');
-      return;
-    }
-    const bubble = createStreamingBubble();
-    const bodyEl = bubble.querySelector('.bubble') || bubble;
-    const t0 = Date.now();
-    statusBadge.textContent = '生成报告中…';
-    const timer = setInterval(() => {
-      const sec = Math.floor((Date.now() - t0) / 1000);
-      bodyEl.innerHTML = renderMarkdown(`🛠️ 正在调用 WCCA 专家智能体生成完整报告… 已用时 ${sec} 秒
-
-（自动识别原理图 + 解析 BOM + 最坏情况计算 + 编译 PDF，通常需要几分钟，请勿关闭页面）`);
-      chatArea.scrollTop = chatArea.scrollHeight;
-    }, 1000);
-    try {
-      const resp = await fetch('/api/wcca/run-agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ schematic_paths: schematicPaths, bom_paths: bomPaths, params }),
-      });
-      const data = await resp.json();
-      clearInterval(timer);
-      if (resp.ok && data.ok) {
-        const md = `## ✅ WCCA 报告已生成
-
-报告已完成最坏情况分析并编译为 PDF。
-
-<a class="dl-link" href="${data.download}" target="_blank">📄 下载 WCCA 报告 PDF</a>`;
-        bodyEl.innerHTML = renderMarkdown(md);
-        messages.push({ role: 'assistant', content: '[已生成 WCCA 报告 PDF]' });
-        statusBadge.textContent = '报告已生成';
-        statusBadge.classList.add('connected');
-      } else {
-        const err = data.error || data.detail || `HTTP ${resp.status}`;
-        bodyEl.innerHTML = renderMarkdown(`⚠️ 报告生成失败：${err}`);
-        statusBadge.textContent = '生成失败';
-      }
-    } catch (e) {
-      clearInterval(timer);
-      bodyEl.innerHTML = renderMarkdown(`⚠️ 报告请求失败：${e.message}`);
-      statusBadge.textContent = '生成失败';
-    }
-    chatArea.scrollTop = chatArea.scrollHeight;
-  }
-
-  async function runCalculation(params) {
-    try {
-      statusBadge.textContent = "计算中…";
-      const resp = await fetch("/api/wcca/calculate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
-      });
-      const result = await resp.json();
-
-      if (!resp.ok) {
-        const msg = result.detail || result.error || `HTTP ${resp.status}`;
-        appendMessage("expert", `⚠️ 计算出错: ${msg}`);
-        return;
-      }
-
-      // 格式化结果
-      let report = "## 📊 WCCA 计算结果\n\n";
-      report += `**母线电压**: ${result.V_HVDC_typ}V | **安全电压**: ${result.V_Safety}V | **温度范围**: ${result.T_min}°C ~ ${result.T_max}°C\n`;
-      report += `**电容反推值**: ${(result.Cap_HVDC_typ * 1e6).toFixed(3)} μF | **ln(Vs/Vh)**: ${result.ln_ratio}\n\n`;
-
-      for (const cr of result.config_results) {
-        const passIcon = (cr.t_passed && cr.P_passed) ? "✅" : "❌";
-        report += `### ${passIcon} ${cr.config_name}\n`;
-        report += `| 项目 | 值 | 判定 |\n|------|-----|------|\n`;
-        report += `| 放电时间 (典型) | **${cr.t_discharge_typ}s** | — |\n`;
-        report += `| 放电时间 (最坏) | **${cr.t_discharge_max}s** | ${cr.t_passed ? "✅ ≤120s" : "❌ >120s"} |\n`;
-        report += `| 单颗功耗 (最坏) | **${cr.P_single_max}W** | ${cr.P_passed ? `✅ <${cr.P_derate_target}W` : `❌ ≥${cr.P_derate_target}W`} |\n`;
-        report += `| 总功耗 | ${cr.P_all_max}W | — |\n`;
-        report += `| 等效并联电阻 (max) | ${(cr.R_parallel_max/1000).toFixed(2)}kΩ | — |\n\n`;
-      }
-
-      report += result.all_t_pass && result.all_P_pass
-        ? "## ✅ 综合结论: 全部通过"
-        : "## ⚠️ 综合结论: 存在不通过项，请检查参数";
-
-      appendMessage("expert", report);
-      messages.push({ role: "assistant", content: report });
-      statusBadge.textContent = "计算完成";
-      statusBadge.classList.add("connected");
-    } catch (e) {
-      appendMessage("expert", `⚠️ 计算请求失败: ${e.message}`);
-    }
-  }
-
-  // ===== UI 工具函数 =====
+  // ===== UI utility functions =====
   function appendMessage(role, text) {
     const div = document.createElement("div");
-    div.className = `msg ${role}`;
+    div.className = "msg " + role;
     const avatar = role === "expert" ? "👨‍🔬" : "👤";
-    div.innerHTML = `<div class="avatar">${avatar}</div><div class="bubble">${renderMarkdown(text)}</div>`;
+    div.innerHTML = '<div class="avatar">' + avatar + '</div><div class="bubble">' + renderMarkdown(text) + '</div>';
     chatArea.appendChild(div);
     chatArea.scrollTop = chatArea.scrollHeight;
     return div;
@@ -731,7 +665,7 @@
   function showTyping() {
     const el = document.createElement("div");
     el.className = "msg expert";
-    el.innerHTML = `<div class="avatar">👨‍🔬</div><div class="typing-indicator"><span></span><span></span><span></span></div>`;
+    el.innerHTML = '<div class="avatar">👨‍🔬</div><div class="typing-indicator"><span></span><span></span><span></span></div>';
     chatArea.appendChild(el);
     chatArea.scrollTop = chatArea.scrollHeight;
     return el;
@@ -751,18 +685,6 @@
     return bubble;
   }
 
-  function parseParamsFromText(text) {
-    const m = text.match(/```json\s*([\s\S]*?)\s*```/);
-    if (!m) return null;
-    try { return JSON.parse(m[1]); } catch (e) { return null; }
-  }
-
-  // 把专家回复里的 ```json {ready/params} 代码块从“显示文本”中剥掉，
-  // 用户不该看到这串参数代码；对话历史 messages 仍保留完整原文。
-  function stripJsonBlock(text) {
-    return text.replace(/```json\s*[\s\S]*?```/g, "").replace(/\n{3,}/g, "\n\n").trim();
-  }
-
   function renderMarkdown(text) {
     return text
       .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
@@ -772,12 +694,14 @@
       .replace(/^# (.*$)/gm, "<h2>$1</h2>")
       .replace(/\|(.+)\|/g, (match) => {
         const cells = match.split("|").filter(c => c.trim());
-        if (cells.every(c => c.match(/^[-:]+$/))) return ""; // skip separator
-        const tag = match.includes("---") ? "" : "";
-        return `<tr>${cells.map(c => match === text.split("\n").find(l => l.includes("|") && !l.match(/^[-| ]+$/)) ? `<th>${c.trim()}</th>` : `<td>${c.trim()}</td>`).join("")}</tr>`;
+        if (cells.every(c => c.match(/^[-:]+$/))) return "";
+        return "<tr>" + cells.map(c => "<td>" + c.trim() + "</td>").join("") + "</tr>";
       })
-      .replace(/\n\n/g, "<br><br>")
-      .replace(/\n/g, "<br>");
+      .replace(/
+
+/g, "<br><br>")
+      .replace(/
+/g, "<br>");
   }
 
   function fileToBase64(file) {
@@ -785,7 +709,7 @@
       const reader = new FileReader();
       reader.onload = () => {
         const s = reader.result;
-        const comma = s.indexOf(',');
+        const comma = s.indexOf(",");
         resolve(comma >= 0 ? s.slice(comma + 1) : s);
       };
       reader.onerror = reject;
@@ -793,7 +717,7 @@
     });
   }
 
-  // ===== 左边栏：Tab 切换 =====
+  // ===== Sidebar: tab switch =====
   function switchSidePage(which) {
     const isMat = which === "materials";
     document.getElementById("tab-materials").classList.toggle("active", isMat);
@@ -802,7 +726,6 @@
     document.getElementById("page-datasheet").classList.toggle("active", !isMat);
   }
 
-  // ===== 左边栏：已上传材料列表（按类型分流到原理图/BOM 列表）=====
   function addFileToList(name, tag) {
     const listId = tag === "BOM" ? "bom-list" : "sch-list";
     const list = document.getElementById(listId);
@@ -817,15 +740,12 @@
     list.appendChild(row);
   }
 
-  // ===== Datasheet 页：上传（解析能力后续接入，先做列表）=====
   async function uploadDatasheet(input) {
     const files = Array.from(input.files || []);
     for (const file of files) {
       const fd = new FormData();
       fd.append("file", file);
-      try {
-        await fetch("/api/wcca/upload", { method: "POST", body: fd });
-      } catch (e) { /* ignore upload error for now */ }
+      try { await fetch("/api/wcca/upload", { method: "POST", body: fd }); } catch (e) {}
       const list = document.getElementById("ds-file-list");
       if (list) {
         const row = document.createElement("div");
@@ -837,29 +757,12 @@
       }
     }
     input.value = "";
-    // TODO: 调用后端/agent 解析 datasheet -> renderDatasheets(slices)
-  }
-
-  // ===== 左边栏：Datasheet 区渲染（占位 hook，后台能力就绪后填充）=====
-  function renderDatasheets(items) {
-    const c = document.getElementById("ds-container");
-    if (!c) return;
-    if (!items || !items.length) {
-      c.innerHTML = '<div class="ds-empty">生成报告后，这里会显示器件 datasheet 与关键参数切片。</div>';
-      return;
-    }
-    // 后续实现：渲染每个 MPN 的 datasheet 下载链接 + 关键参数切片
-    const rows = items.map(function(it){
-      return '<div class="file-row"><span class="f-icon">📄</span>' +
-        '<span class="f-name">' + (it.mpn || it.name || "") + '</span></div>';
-    }).join("");
-    c.innerHTML = '<div class="ds-list">' + rows + '</div>';
   }
 
   function formatSize(bytes) {
-    if (bytes < 1024) return `${bytes}B`;
-    if (bytes < 1048576) return `${(bytes/1024).toFixed(1)}KB`;
-    return `${(bytes/1048576).toFixed(1)}MB`;
+    if (bytes < 1024) return bytes + "B";
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + "KB";
+    return (bytes / 1048576).toFixed(1) + "MB";
   }
 
   function onKeyDown(e) {
@@ -869,7 +772,6 @@
     }
   }
 
-  // 自动调整 textarea 高度
   userInput.addEventListener("input", () => {
     userInput.style.height = "auto";
     userInput.style.height = Math.min(userInput.scrollHeight, 120) + "px";
