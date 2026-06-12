@@ -451,6 +451,25 @@
   const statusBadge = document.getElementById("status-badge");
   let isStreaming = false;
 
+  function toFriendlyError(msg) {
+    const raw = (msg || "").toString();
+    const low = raw.toLowerCase();
+    if (low.includes("budget has been exceeded") || low.includes("max budget")) {
+      return "API 调用额度已用尽，请更换可用账号或提升预算后重试。";
+    }
+    if (low.includes("unauthorized") || low.includes("invalid api key") || low.includes("forbidden")) {
+      return "API 鉴权失败，请检查 token 或账号权限。";
+    }
+    return raw || "服务暂时不可用，请稍后重试。";
+  }
+
+  function containsQuotaError(msg) {
+    const s = (msg || "").toString().toLowerCase();
+    return s.includes("budget has been exceeded") ||
+      s.includes("max budget") ||
+      s.includes("api error: 400") && s.includes("budget");
+  }
+
   // Persistent state: user_id stored in sessionStorage so a page-refresh
   // within the same tab resumes the same CLI --resume session.
   let userId = sessionStorage.getItem("wcca_user_id");
@@ -467,14 +486,22 @@
       const fd = new FormData();
       fd.append("user_id", userId);
       const resp = await fetch("/api/wcca/session/start", { method: "POST", body: fd });
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      if (!resp.ok) {
+        let detail = "HTTP " + resp.status;
+        try {
+          const err = await resp.json();
+          if (err && err.detail) detail = err.detail;
+        } catch (e2) {}
+        throw new Error(toFriendlyError(detail));
+      }
       const data = await resp.json();
       sessionReady = true;
       statusBadge.textContent = "connected";
       statusBadge.classList.add("connected");
     } catch (e) {
+      const msg = toFriendlyError(e && e.message ? e.message : "");
       statusBadge.textContent = "offline";
-      appendMessage("expert", "⚠️ 无法启动分析会话，请刷新页面重试。错误：" + e.message);
+      appendMessage("expert", "⚠️ 无法启动分析会话。" + msg);
     }
   })();
 
@@ -515,7 +542,12 @@
       const resp = await fetch("/api/wcca/session/message", { method: "POST", body: fd });
       if (!resp.ok) {
         removeTyping(typingEl);
-        appendMessage("expert", "⚠️ 服务暂时不可用，请稍候重试。");
+        let detail = "HTTP " + resp.status;
+        try {
+          const err = await resp.json();
+          if (err && err.detail) detail = err.detail;
+        } catch (e2) {}
+        appendMessage("expert", "⚠️ " + toFriendlyError(detail));
         return;
       }
 
@@ -533,8 +565,7 @@
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("
-");
+        const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
         for (const line of lines) {
@@ -554,9 +585,7 @@
                 const d = JSON.parse(dataStr);
                 if (d.download) {
                   const dlBubble = appendMessage("expert",
-                    "## ✅ WCCA 报告已生成
-
-" +
+                    "## ✅ WCCA 报告已生成\n\n" +
                     '<a class="dl-link" href="' + d.download + '" target="_blank">📄 下载 WCCA 报告 PDF</a>'
                   );
                   statusBadge.textContent = "报告已生成";
@@ -572,11 +601,15 @@
               const d = JSON.parse(dataStr);
               if (d.text) {
                 fullText += d.text;
-                bubbleEl.innerHTML = renderMarkdown(fullText);
+                if (containsQuotaError(fullText)) {
+                  bubbleEl.innerHTML = renderMarkdown("⚠️ API 调用额度已用尽，请更换可用账号或提升预算后重试。");
+                } else {
+                  bubbleEl.innerHTML = renderMarkdown(fullText);
+                }
                 chatArea.scrollTop = chatArea.scrollHeight;
               }
               if (d.error) {
-                bubbleEl.innerHTML = renderMarkdown("⚠️ " + d.error);
+                bubbleEl.innerHTML = renderMarkdown("⚠️ " + toFriendlyError(d.error));
               }
             } catch (e2) { /* skip bad JSON */ }
             eventName = "";
@@ -587,7 +620,7 @@
       }
     } catch (e) {
       removeTyping(typingEl);
-      appendMessage("expert", "⚠️ 连接失败: " + e.message);
+      appendMessage("expert", "⚠️ 连接失败: " + toFriendlyError(e && e.message ? e.message : ""));
     } finally {
       isStreaming = false;
     }
@@ -635,12 +668,9 @@
       } else if (result.summary && result.summary.columns) {
         // BOM table
         addFileToList(file.name, "BOM");
-        const bomInfo = "[BOM 文件已上传: " + file.name + "]
-" +
-          "解析结果: " + result.summary.rows + " 行数据, 列: " + result.summary.columns.join(", ") + "
-" +
-          "前几行预览:
-" + JSON.stringify(result.summary.preview && result.summary.preview.slice(0, 10), null, 2);
+        const bomInfo = "[BOM 文件已上传: " + file.name + "]\n" +
+          "解析结果: " + result.summary.rows + " 行数据, 列: " + result.summary.columns.join(", ") + "\n" +
+          "前几行预览:\n" + JSON.stringify(result.summary.preview && result.summary.preview.slice(0, 10), null, 2);
         await streamSession(bomInfo, null, null);
       } else {
         const msg = "[上传了文件: " + file.name + ", " + formatSize(file.size) + "]";
@@ -697,11 +727,8 @@
         if (cells.every(c => c.match(/^[-:]+$/))) return "";
         return "<tr>" + cells.map(c => "<td>" + c.trim() + "</td>").join("") + "</tr>";
       })
-      .replace(/
-
-/g, "<br><br>")
-      .replace(/
-/g, "<br>");
+      .replace(/\n\n/g, "<br><br>")
+      .replace(/\n/g, "<br>");
   }
 
   function fileToBase64(file) {
